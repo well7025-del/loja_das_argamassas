@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0A3D75">
+<meta name="description" content="Catálogo de argamassas, rejuntes, cimento e materiais de acabamento da Loja das Argamassas.">
+<title>Catálogo — Loja das Argamassas</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23FFB300'/><text x='50' y='70' font-size='58' font-family='Segoe UI,Arial' font-weight='bold' text-anchor='middle' fill='%230A3D75'>LA</text></svg>">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header class="cat-topo">
+    <div style="max-width:1200px;margin:0 auto">
+      <div class="marca" style="margin-bottom:10px">
+        <div class="marca-icone">LA</div>
+        <div class="marca-nome" style="color:#fff" id="cat-nome">Loja das Argamassas<small style="color:#9FBCDA" id="cat-slogan"></small></div>
+      </div>
+      <div id="cat-loja" class="pequeno" style="opacity:.9"></div>
+    </div>
+  </header>
+
+  <main style="max-width:1200px;margin:0 auto;padding:20px 18px 60px">
+    <div class="filtros">
+      <div class="campo" style="flex:2">
+        <label for="cat-busca">Buscar produto</label>
+        <input type="search" id="cat-busca" placeholder="Ex.: argamassa AC-III, rejunte, cimento…">
+      </div>
+      <div class="campo">
+        <label for="cat-loja-sel">Ver disponibilidade</label>
+        <select id="cat-loja-sel"></select>
+      </div>
+      <button class="btn btn-ok" id="cat-whats">💬 Falar com a loja</button>
+    </div>
+    <div id="cat-categorias" class="pdv-categorias"></div>
+    <div id="cat-conteudo"></div>
+  </main>
+
+  <footer style="background:var(--cinza-900);color:#9FBCDA;padding:22px;text-align:center;font-size:13px">
+    <div id="cat-rodape"></div>
+    <div style="margin-top:8px;opacity:.65">Preços sujeitos a alteração sem aviso prévio. Consulte a loja para condições de pagamento e entrega.</div>
+  </footer>
+
+  <script type="module" src="/js/catalogo-publico.js"></script>
+</body>
+</html>
