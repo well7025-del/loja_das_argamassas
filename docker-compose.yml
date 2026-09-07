@@ -1,0 +1,20 @@
+services:
+  erp:
+    build: .
+    container_name: argamassas-erp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data           # banco de dados
+      - ./uploads:/app/uploads     # comprovantes e fotos de produtos
+    environment:
+      TZ: America/Recife
+      # Defina antes da PRIMEIRA execucao para escolher as senhas iniciais:
+      # MASTER_PASSWORD: troque-esta-senha
+      # RECIFE_PASSWORD: troque-esta-senha
+      # CARUARU_PASSWORD: troque-esta-senha
+      # Ative quando o sistema estiver atras de HTTPS:
+      # SECURE_COOKIE: "1"
+      # Opcional, para o relatorio escrito por IA:
+      # ANTHROPIC_API_KEY: sk-ant-...

@@ -1,0 +1,7 @@
+.git
+data
+uploads
+node_modules
+*.log
+deploy
+README.md

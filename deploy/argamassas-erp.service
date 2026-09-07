@@ -1,0 +1,30 @@
+# Servico do sistema: mantem o ERP no ar e reinicia sozinho se cair ou se o servidor reiniciar.
+# Instalar em /etc/systemd/system/argamassas-erp.service
+[Unit]
+Description=ERP Loja das Argamassas
+After=network.target
+
+[Service]
+Type=simple
+User=erp
+WorkingDirectory=/opt/argamassas-erp
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=5
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=TZ=America/Recife
+Environment=SECURE_COOKIE=1
+# Arquivo opcional com senhas e chaves (uma por linha, no formato CHAVE=valor)
+EnvironmentFile=-/opt/argamassas-erp/.env
+
+# Restricoes de seguranca: o processo so escreve nas pastas do proprio sistema
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/argamassas-erp/data /opt/argamassas-erp/uploads
+
+[Install]
+WantedBy=multi-user.target

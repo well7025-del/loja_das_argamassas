@@ -52,6 +52,27 @@ Comandos disponíveis:
 
 ---
 
+## Como colocar no ar
+
+O guia passo a passo, em linguagem simples, está em
+**[deploy/COMO-COLOCAR-NO-AR.md](deploy/COMO-COLOCAR-NO-AR.md)**. Em resumo:
+
+- **Testar no seu computador**: instale o Node.js, baixe o projeto e rode `npm start`.
+- **Colocar no ar de verdade** (recomendado): num servidor Ubuntu, o instalador faz tudo —
+  Node.js, serviço que reinicia sozinho, endereço próprio e certificado HTTPS:
+
+  ```bash
+  git clone -b claude/argamassas-erp-web-vj4knb https://github.com/well7025-del/loja_das_argamassas.git /tmp/erp
+  sudo bash /tmp/erp/deploy/instalar-ubuntu.sh erp.seudominio.com.br
+  ```
+
+  Rodar o mesmo comando de novo atualiza o sistema preservando banco, comprovantes e senhas.
+- **Docker**: `docker compose up -d`, com volumes em `data/` e `uploads/`.
+
+Backup automático diário: `deploy/backup.sh` (instruções no guia).
+
+---
+
 ## Perfis e permissões
 
 | | Master | Gerente da loja |
