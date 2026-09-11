@@ -21,6 +21,15 @@ export function el(tag, attrs = {}, filhos = []) {
   return n;
 }
 
+/** Acrescenta filhos ignorando nulos — o `append` nativo insere o texto "null". */
+export function anexar(pai, ...filhos) {
+  for (const f of filhos.flat()) {
+    if (f === null || f === undefined || f === false) continue;
+    pai.append(f);
+  }
+  return pai;
+}
+
 export const $ = (sel, raiz = document) => raiz.querySelector(sel);
 export const $$ = (sel, raiz = document) => [...raiz.querySelectorAll(sel)];
 export const limpar = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };

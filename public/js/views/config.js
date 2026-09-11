@@ -1,7 +1,7 @@
 /* Configuracoes (somente master): lojas, usuarios, dados da empresa e notificacoes. */
 import { api } from '../api.js';
 import { estado, ehMaster } from '../app.js';
-import { el, limpar, erro, sucesso, modal, vazio, dataBR, confirmar } from '../ui.js';
+import { el, limpar, erro, sucesso, modal, vazio, dataBR, confirmar, anexar } from '../ui.js';
 
 const PAPEIS = { master: 'Master (todas as lojas)', gerente: 'Gerente da loja', vendedor: 'Vendedor' };
 
@@ -105,7 +105,7 @@ export async function render(raiz) {
   /* ---------- Usuarios ---------- */
   async function abaUsuarios() {
     const { usuarios } = await api.get('/api/usuarios');
-    limpar(conteudo).append(
+anexar(limpar(conteudo), 
       el('div', { class: 'flex quebra mb', style: { justifyContent: 'space-between' } }, [
         el('div', { class: 'pequeno texto-mudo', text: 'Cada gerente só enxerga a própria loja. O master enxerga todas e é o único que cadastra produtos e define custo e preço.' }),
         el('button', { class: 'btn btn-acao', onclick: () => formUsuario() }, '+ Novo usuário')

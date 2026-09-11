@@ -62,7 +62,8 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8'
+  '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8'
 };
 
 async function serveFile(res, baseDir, relPath, { cache = false } = {}) {
@@ -134,6 +135,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Aplicativo de loja unica (PWA instalavel no celular).
+  // A barra final e obrigatoria: sem ela os caminhos relativos do app
+  // (css/, js/, sw.js) resolveriam para a raiz do sistema principal.
+  if (pathname === '/loja') {
+    res.writeHead(301, { Location: '/loja/' + url.search });
+    res.end();
+    return;
+  }
+  if (pathname === '/loja/') {
+    if (await serveFile(res, PUBLIC_DIR, 'loja/index.html')) return;
+  }
+
   // SPA + catalogo publico
   if (pathname === '/' || pathname === '/index.html') {
     if (await serveFile(res, PUBLIC_DIR, 'index.html')) return;
@@ -142,7 +155,10 @@ const server = createServer(async (req, res) => {
     if (await serveFile(res, PUBLIC_DIR, 'catalogo.html')) return;
   }
   if (await serveFile(res, PUBLIC_DIR, pathname.replace(/^\//, ''), { cache: pathname.startsWith('/img/') })) return;
-  if (await serveFile(res, PUBLIC_DIR, 'index.html')) return;
+
+  // cada aplicativo cai no seu proprio index, nunca no do outro
+  const inicial = pathname.startsWith('/loja/') ? 'loja/index.html' : 'index.html';
+  if (await serveFile(res, PUBLIC_DIR, inicial)) return;
   json(res, 404, { error: 'Nao encontrado' });
 });
 

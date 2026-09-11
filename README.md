@@ -73,6 +73,23 @@ Backup automático diário: `deploy/backup.sh` (instruções no guia).
 
 ---
 
+## Aplicativo da Loja Caruaru (celular único)
+
+Além do sistema web, o projeto traz uma **versão enxuta para um celular da loja**,
+em `public/loja/`. Ela roda dentro do próprio aparelho (IndexedDB), **funciona sem
+internet**, instala como aplicativo pela tela inicial do Android e faz **backup no
+Google Drive**.
+
+Abra em `https://SEU-ENDERECO/loja/` — ou publique a pasta `public/loja/` sozinha em
+qualquer hospedagem estática, pois não depende do servidor.
+
+Tem PDV com voz e comprovante, estoque, caixa, despesas, clientes e resultado.
+Não tem fábrica, multi-loja, usuários, mapa, catálogo nem campanhas — isso é do
+sistema completo. Guia passo a passo:
+**[deploy/COMO-USAR-O-APP-DA-LOJA.md](deploy/COMO-USAR-O-APP-DA-LOJA.md)**.
+
+---
+
 ## Perfis e permissões
 
 | | Master | Gerente da loja |
@@ -200,6 +217,12 @@ public/
     ui.js           componentes, formatação, gráficos SVG e upload de imagem
     voice.js        reconhecimento de fala e interpretação dos comandos
     views/          uma tela por módulo
+  loja/             aplicativo de celular da Loja Caruaru (offline, dados no aparelho)
+    index.html      aplicação instalável (PWA)
+    sw.js           service worker: abre sem internet
+    js/db.js        banco local em IndexedDB
+    js/backup.js    backup em arquivo e no Google Drive
+    js/views/       uma tela por módulo
 ```
 
 **Sem build e sem dependências obrigatórias**: o front é JavaScript de módulos nativos e

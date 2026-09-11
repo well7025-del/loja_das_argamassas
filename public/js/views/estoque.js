@@ -1,7 +1,7 @@
 /* Posicao de estoque por unidade (lojas + fabrica), ajustes e historico. */
 import { api } from '../api.js';
 import { estado, ehMaster } from '../app.js';
-import { el, limpar, dinheiro, numero, dataHora, erro, sucesso, modal, vazio } from '../ui.js';
+import { el, limpar, dinheiro, numero, dataHora, erro, sucesso, modal, vazio, anexar } from '../ui.js';
 
 const ROTULO_MOV = {
   producao: '🏭 Produção', transferencia_saida: '📤 Transferência (saída)',
@@ -24,7 +24,7 @@ export async function render(raiz) {
 
   const btnAlerta = el('button', { class: 'btn btn-vazio', onclick: () => { somenteAlerta = !somenteAlerta; btnAlerta.classList.toggle('btn-perigo', somenteAlerta); carregar(); } }, '⚠️ Só alertas');
 
-  raiz.append(
+anexar(raiz, 
     el('div', { class: 'filtros' }, [
       el('div', { class: 'campo' }, [el('label', { text: 'Unidade' }), seletorLoja]),
       el('div', { class: 'campo', style: { flex: '2' } }, [el('label', { text: 'Produto' }), entradaBusca]),

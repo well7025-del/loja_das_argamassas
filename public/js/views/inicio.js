@@ -1,7 +1,7 @@
 /* Painel inicial: o essencial do dia em uma tela (principio de Pareto). */
 import { api } from '../api.js';
 import { estado, ehMaster } from '../app.js';
-import { el, kpi, dinheiro, numero, percentual, dataCurta, graficoLinha, vazio, dataHora } from '../ui.js';
+import { el, kpi, dinheiro, numero, percentual, dataCurta, graficoLinha, vazio, dataHora, anexar } from '../ui.js';
 
 const varia = (atual, anterior) => (anterior ? (atual - anterior) / anterior * 100 : null);
 
@@ -19,7 +19,7 @@ export async function render(raiz) {
   const hora = new Date().getHours();
   const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
 
-  raiz.append(
+anexar(raiz, 
     el('div', { class: 'flex quebra mb', style: { justifyContent: 'space-between' } }, [
       el('div', {}, [
         el('h1', { style: { fontSize: '22px' }, text: `${saudacao}, ${nome}!` }),
