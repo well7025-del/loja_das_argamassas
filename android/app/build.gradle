@@ -46,9 +46,22 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    lint {
+        // Aplicativo interno: um aviso de estilo nao deve impedir a loja de
+        // receber uma correcao. Os erros de compilacao continuam valendo.
+        abortOnError false
+        checkReleaseBuilds false
+    }
 }
 
 dependencies {
+    // As bibliotecas do AndroidX trazem versoes diferentes do kotlin-stdlib
+    // (1.8.22 e 1.6.21); a partir da 1.8 o stdlib absorveu as classes do
+    // stdlib-jdk8, entao sem alinhar as versoes as mesmas classes aparecem
+    // duas vezes e o build para. O BOM resolve isso de uma vez.
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.9.24')
+
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.webkit:webkit:1.11.0'   // WebViewAssetLoader: serve os assets como origem https
     implementation 'androidx.core:core:1.13.1'

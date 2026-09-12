@@ -88,6 +88,18 @@ Não tem fábrica, multi-loja, usuários, mapa, catálogo nem campanhas — isso
 sistema completo. Guia passo a passo:
 **[deploy/COMO-USAR-O-APP-DA-LOJA.md](deploy/COMO-USAR-O-APP-DA-LOJA.md)**.
 
+### Instalador para Android (.apk)
+
+O mesmo aplicativo também existe como **instalador `.apk`**, que embute todo o
+sistema e **não depende de servidor nem de domínio** — só do celular. O projeto
+Android fica em `android/` e o arquivo é gerado pela automação em
+`.github/workflows/apk.yml`, saindo na aba **Releases** do repositório.
+
+Dentro do APK, o reconhecimento de voz e o backup usam recursos nativos do
+Android (o WebView não tem a API de voz do navegador, e o Google recusa a tela
+de login dele dentro de um WebView). Detalhes e passo a passo da instalação:
+**[deploy/COMO-GERAR-O-APK.md](deploy/COMO-GERAR-O-APK.md)**.
+
 ---
 
 ## Perfis e permissões
