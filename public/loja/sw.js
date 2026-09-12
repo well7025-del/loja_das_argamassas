@@ -1,13 +1,14 @@
 /* Service worker: guarda o aplicativo no celular para abrir sem internet.
    Estratégia: o app é servido do cache (rápido e offline) e atualizado em
    segundo plano. Nada de dado da loja passa por aqui — isso vive no IndexedDB. */
-const CACHE = 'loja-caruaru-v1';
+const CACHE = 'loja-caruaru-v2';
 const ARQUIVOS = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css',
   './js/app.js', './js/db.js', './js/ui.js', './js/voice.js', './js/backup.js',
+  './js/impressora.js',
   './js/views/inicio.js', './js/views/pdv.js', './js/views/estoque.js',
-  './js/views/caixa.js', './js/views/mais.js', './js/views/clientes.js',
+  './js/views/contas.js', './js/views/mais.js', './js/views/clientes.js',
   './js/views/despesas.js', './js/views/relatorio.js', './js/views/ajustes.js',
   './js/views/vendas.js',
   './icons/icone-192.png', './icons/icone-512.png', './icons/icone-mascara.png'

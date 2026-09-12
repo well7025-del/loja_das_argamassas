@@ -5,6 +5,7 @@ import {
   el, limpar, dinheiro, numero, erro, sucesso, painel, vazio, campoFoto,
   abrirWhatsApp, numeroWhatsApp, telefoneBR, copiar, dataHora, atrasar, $, anexar } from '../ui.js';
 import { vozDisponivel, criarReconhecedor, interpretarComandoPDV, interpretarCliente } from '../voice.js';
+import { impressoraDisponivel, imprimirCupom } from '../impressora.js';
 
 const PAGAMENTOS = [
   { id: 'dinheiro', rotulo: '💵 Dinheiro' }, { id: 'pix', rotulo: '⚡ PIX' },
@@ -432,7 +433,11 @@ export async function render(raiz) {
           'Sem WhatsApp cadastrado — ao enviar, você escolhe o contato no próprio aplicativo.') : null
       ]),
       acoes: [
-        { rotulo: '📋 Copiar', acao: () => copiar(texto) },
+        impressoraDisponivel()
+          ? { rotulo: '🖨️ Imprimir', acao: async () => {
+              try { sucesso(await imprimirCupom(venda)); } catch (e) { erro(e.message); }
+            } }
+          : { rotulo: '📋 Copiar', acao: () => copiar(texto) },
         { rotulo: '💬 WhatsApp', class: 'btn-ok', acao: () => abrirWhatsApp(numeroZap, texto) }
       ]
     });

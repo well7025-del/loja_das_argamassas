@@ -8,12 +8,18 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Lancamento de produtos e clientes por voz -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Impressora termica Bluetooth -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
     <!-- Gravar o arquivo de backup na pasta Downloads (Android 9 e anteriores) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 
     <!-- Permite consultar se ha um app capaz de reconhecer voz (Android 11+) -->
     <queries>

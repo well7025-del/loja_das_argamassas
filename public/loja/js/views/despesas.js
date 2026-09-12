@@ -1,5 +1,5 @@
 /* Despesas da loja. Quando paga em dinheiro, sai do caixa automaticamente. */
-import { listar, remover, salvar, registrarDespesa, saldoCaixa } from '../db.js';
+import { listar, remover, registrarDespesa, lancar, saldos } from '../db.js';
 import { el, limpar, dinheiro, dataBR, erro, sucesso, painel, vazio, barras, confirmar, hoje, numero, anexar } from '../ui.js';
 
 const CATEGORIAS = ['aluguel', 'salario', 'comissao', 'energia', 'agua', 'internet', 'impostos',
@@ -10,7 +10,8 @@ const NOMES = {
   combustivel: 'Combustível', manutencao: 'Manutenção', fornecedor: 'Fornecedor',
   marketing: 'Marketing', outros: 'Outros'
 };
-const FORMAS = { dinheiro: 'Dinheiro', pix: 'PIX', cartao: 'Cartão', boleto: 'Boleto', transferencia: 'Transferência' };
+// A conta define de onde o dinheiro saiu; guardamos o nome para o histórico
+// continuar legível mesmo se a conta for renomeada ou excluída depois.
 
 export async function render(raiz) {
   const corpo = el('div');
@@ -59,7 +60,7 @@ anexar(limpar(corpo),
             el('button', { class: 'item', onclick: () => abrir(d) }, [
               el('div', { class: 'info' }, [
                 el('div', { class: 'titulo', text: NOMES[d.categoria] || d.categoria }),
-                el('div', { class: 'sub', text: `${dataBR(d.data)} · ${FORMAS[d.forma] || d.forma}${d.descricao ? ' · ' + d.descricao : ''}` })
+                el('div', { class: 'sub', text: [dataBR(d.data), d.contaNome, d.descricao].filter(Boolean).join(' · ') })
               ]),
               el('span', { class: 'valor', text: dinheiro(d.valor) })
             ]))))
@@ -74,16 +75,16 @@ anexar(limpar(corpo),
         el('div', { class: 'kpi vermelho mb' }, [
           el('div', { class: 'rot', text: 'Valor' }), el('div', { class: 'val', text: dinheiro(despesa.valor) })
         ]),
-        el('div', { class: 'pq mudo', text: `${dataBR(despesa.data)} · pago em ${FORMAS[despesa.forma] || despesa.forma}` }),
+        el('div', { class: 'pq mudo', text: `${dataBR(despesa.data)}${despesa.contaNome ? ' · pago por ' + despesa.contaNome : ''}` }),
         despesa.descricao ? el('p', { text: despesa.descricao }) : null
       ]),
       acoes: [{
         rotulo: 'Excluir', class: 'btn-perigo', acao: async (fechar) => {
           if (!await confirmar('Excluir esta despesa? Se foi paga em dinheiro, o valor volta para o caixa.', { perigo: true })) return;
           await remover('despesas', despesa.id);
-          if (despesa.forma === 'dinheiro') {
-            await salvar('caixa', {
-              data: new Date().toISOString(), tipo: 'acerto', valor: despesa.valor,
+          if (despesa.contaId) {
+            await lancar({
+              contaId: despesa.contaId, tipo: 'ajuste', valor: despesa.valor,
               descricao: `Estorno de despesa (${NOMES[despesa.categoria] || despesa.categoria})`
             });
           }
@@ -93,14 +94,16 @@ anexar(limpar(corpo),
     });
   }
 
-  function formulario() {
+  async function formulario() {
+    const contas = await saldos();
     const categoria = el('select', {}, CATEGORIAS.map(c => el('option', { value: c, text: NOMES[c] })));
     const valor = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0,00' });
     const descricao = el('input', { type: 'text', placeholder: 'Ex.: conta de setembro' });
-    const forma = el('select', {}, Object.entries(FORMAS).map(([k, v]) => el('option', { value: k, text: v })));
+    const conta = el('select', {}, [
+      ...contas.map(c => el('option', { value: c.id, text: `${c.nome} — ${dinheiro(c.saldo)}` })),
+      el('option', { value: '', text: 'Não lançar em conta (só registrar)' })
+    ]);
     const data = el('input', { type: 'date', value: hoje() });
-    const avisoCaixa = el('div', { class: 'aviso aviso-amarelo', text: 'Pago em dinheiro: sai do caixa da loja.' });
-    forma.addEventListener('change', () => { avisoCaixa.hidden = forma.value !== 'dinheiro'; });
 
     painel({
       titulo: 'Lançar despesa',
@@ -110,25 +113,25 @@ anexar(limpar(corpo),
           el('div', { class: 'campo' }, [el('label', { text: 'Valor (R$) *' }), valor]),
           el('div', { class: 'campo' }, [el('label', { text: 'Data' }), data])
         ]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Forma de pagamento' }), forma]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao]),
-        avisoCaixa
+        el('div', { class: 'campo' }, [
+          el('label', {}, ['Pago por qual conta ', el('span', { class: 'dica', text: '— o saldo dela é debitado' })]),
+          conta
+        ]),
+        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao])
       ]),
       acoes: [{
         rotulo: 'Lançar', class: 'btn-primario', acao: async (fechar) => {
           const v = Number(valor.value);
           if (!v || v <= 0) { erro('Informe o valor'); return; }
-          if (forma.value === 'dinheiro') {
-            const saldo = await saldoCaixa();
-            if (saldo < v) {
-              erro(`O caixa tem ${dinheiro(saldo)}. Lance um suprimento ou escolha outra forma de pagamento.`);
-              return;
-            }
-          }
+          const contaId = conta.value ? Number(conta.value) : null;
+          const escolhida = contas.find(c => c.id === contaId);
+          if (escolhida && escolhida.saldo < v && !await confirmar(
+            `${escolhida.nome} tem ${dinheiro(escolhida.saldo)}. Lançar mesmo assim deixa o saldo negativo.`)) return;
           await registrarDespesa({
             data: new Date(`${data.value}T12:00:00`).toISOString(),
             categoria: categoria.value, valor: v,
-            descricao: descricao.value.trim(), forma: forma.value
+            descricao: descricao.value.trim(),
+            contaId, contaNome: escolhida?.nome || null
           });
           sucesso('Despesa lançada');
           fechar(); desenhar();

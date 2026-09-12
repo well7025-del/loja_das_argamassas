@@ -14,7 +14,7 @@ const ROTAS = {
   inicio:    { titulo: 'Início',        carregar: () => import('./views/inicio.js') },
   pdv:       { titulo: 'Nova venda',    carregar: () => import('./views/pdv.js') },
   estoque:   { titulo: 'Estoque',       carregar: () => import('./views/estoque.js') },
-  caixa:     { titulo: 'Caixa',         carregar: () => import('./views/caixa.js') },
+  contas:    { titulo: 'Contas',        carregar: () => import('./views/contas.js') },
   mais:      { titulo: 'Mais',          carregar: () => import('./views/mais.js') },
   vendas:    { titulo: 'Vendas',        carregar: () => import('./views/vendas.js') },
   clientes:  { titulo: 'Clientes',      carregar: () => import('./views/clientes.js') },
@@ -22,7 +22,7 @@ const ROTAS = {
   relatorio: { titulo: 'Resultado',     carregar: () => import('./views/relatorio.js') },
   ajustes:   { titulo: 'Ajustes',       carregar: () => import('./views/ajustes.js') }
 };
-const ABAS = ['inicio', 'pdv', 'estoque', 'caixa', 'mais'];
+const ABAS = ['inicio', 'pdv', 'estoque', 'contas', 'mais'];
 const rotaAtual = () => location.hash.replace(/^#\/?/, '').split('?')[0] || 'inicio';
 
 let viewAtiva = null;

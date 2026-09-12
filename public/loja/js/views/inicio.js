@@ -1,14 +1,15 @@
 /* Painel do dia: o que o responsável precisa ver ao abrir a loja. */
-import { listar, saldoCaixa } from '../db.js';
+import { listar, saldos } from '../db.js';
 import { estado, recalcularPendencias } from '../app.js';
 import { el, kpi, dinheiro, numero, linha, dataCurta, vazio, cartao, percentual } from '../ui.js';
 
 const dia = (iso) => String(iso).slice(0, 10);
 
 export async function render(raiz) {
-  const [vendas, produtos, despesas, saldo] = await Promise.all([
-    listar('vendas'), listar('produtos'), listar('despesas'), saldoCaixa()
+  const [vendas, produtos, despesas, contas] = await Promise.all([
+    listar('vendas'), listar('produtos'), listar('despesas'), saldos()
   ]);
+  const saldoTotal = contas.reduce((a, c) => a + c.saldo, 0);
   const validas = vendas.filter(v => !v.cancelada);
   const hoje = dia(new Date().toISOString());
 
@@ -42,7 +43,9 @@ export async function render(raiz) {
 
     el('div', { class: 'grade2 mb' }, [
       kpi({ rot: 'Vendas de hoje', val: dinheiro(faturamentoHoje), det: `${numero(doDia.length)} venda(s)`, cor: 'verde' }),
-      kpi({ rot: 'Caixa em dinheiro', val: dinheiro(saldo), det: 'disponível na loja', cor: 'amarelo' })
+      kpi({ rot: 'Saldo das contas', val: dinheiro(saldoTotal),
+            det: contas.map(c => `${c.nome.split(' ')[0]} ${dinheiro(c.saldo)}`).slice(0, 3).join(' · '),
+            cor: 'amarelo' })
     ]),
 
     cartao('Últimos 14 dias', el('div', { class: 'cartao-corpo' }, [
@@ -72,7 +75,7 @@ export async function render(raiz) {
     ),
 
     el('div', { class: 'grade2' }, [
-      el('a', { class: 'btn btn-vazio', href: '#/despesas' }, '📉 Despesa'),
+      el('a', { class: 'btn btn-vazio', href: '#/contas' }, '🏦 Contas'),
       el('a', { class: 'btn btn-vazio', href: '#/relatorio' }, '📊 Resultado')
     ])
   );

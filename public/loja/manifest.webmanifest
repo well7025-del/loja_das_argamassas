@@ -18,6 +18,6 @@
   ],
   "shortcuts": [
     { "name": "Nova venda", "short_name": "Vender", "url": "./index.html#/pdv", "icons": [{ "src": "icons/icone-192.png", "sizes": "192x192" }] },
-    { "name": "Caixa", "short_name": "Caixa", "url": "./index.html#/caixa", "icons": [{ "src": "icons/icone-192.png", "sizes": "192x192" }] }
+    { "name": "Contas", "short_name": "Contas", "url": "./index.html#/contas", "icons": [{ "src": "icons/icone-192.png", "sizes": "192x192" }] }
   ]
 }

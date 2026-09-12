@@ -4,6 +4,7 @@ import { estado } from '../app.js';
 import {
   el, limpar, dinheiro, numero, dataHora, dataBR, erro, sucesso, painel, vazio,
   abrirWhatsApp, numeroWhatsApp, copiar, confirmar, atrasar, diasAtras, hoje, kpi, anexar } from '../ui.js';
+import { impressoraDisponivel, imprimirCupom } from '../impressora.js';
 
 const PAGAMENTO = { dinheiro: 'Dinheiro', pix: 'PIX', debito: 'Débito', credito: 'Crédito', prazo: 'A prazo', boleto: 'Boleto' };
 
@@ -103,6 +104,11 @@ anexar(limpar(corpo),
         ]) : null
       ]),
       acoes: [
+        impressoraDisponivel() && !venda.cancelada
+          ? { rotulo: '🖨️', acao: async () => {
+              try { sucesso(await imprimirCupom(venda)); } catch (e) { erro(e.message); }
+            } }
+          : null,
         !venda.cancelada ? { rotulo: 'Cancelar venda', class: 'btn-perigo', acao: async (fechar) => {
           if (!await confirmar('Cancelar esta venda? O estoque volta e o caixa é estornado.', { perigo: true })) return;
           try { await cancelarVenda(venda.id); sucesso('Venda cancelada'); fechar(); desenhar(); }

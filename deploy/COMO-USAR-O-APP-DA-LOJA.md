@@ -32,7 +32,14 @@ O aplicativo pergunta o nome da loja, o WhatsApp e se você quer já cadastrar a
 de produtos de argamassa (recomendado — você ajusta preços e estoque depois).
 
 Em seguida, vá em **Estoque** e lance a quantidade que existe hoje de cada produto,
-usando **+ Entrada**. A partir daí o estoque se atualiza sozinho a cada venda.
+usando **+ Entrada**, já informando o **custo real da última nota**. A partir daí o
+estoque se atualiza sozinho a cada venda.
+
+### Vindo do sistema antigo
+
+Se você já usa outro sistema, dá para trazer clientes, produtos e o histórico de
+vendas a partir dos relatórios em CSV. Veja
+**[ferramentas/LEIA-ME.md](../ferramentas/LEIA-ME.md)**.
 
 ---
 
@@ -40,10 +47,10 @@ usando **+ Entrada**. A partir daí o estoque se atualiza sozinho a cada venda.
 
 | Aba | Para quê |
 |---|---|
-| **Início** | Vendas do dia, caixa, gráfico de 14 dias e o que está para repor |
+| **Início** | Vendas do dia, saldo das contas, gráfico de 14 dias e o que está para repor |
 | **Vender** | O PDV: toque nos produtos, escolha o pagamento e finalize |
-| **Estoque** | Entrada de mercadoria, preços, estoque mínimo e cadastro de produtos |
-| **Caixa** | Dinheiro da loja: entra com venda, sai com despesa, sangria e depósito |
+| **Estoque** | Entrada de mercadoria com custo real, preços, mínimo e cadastro |
+| **Contas** | Caixa, conta do PIX e conta dos cartões: saldos, transferências, receitas e despesas |
 | **Mais** | Vendas, clientes, despesas, resultado e ajustes |
 
 **Vender é assim:** toque nos produtos (o número no canto mostra quantos entraram),
@@ -55,9 +62,59 @@ botão de enviar no **WhatsApp do cliente**.
 *"desconto 20"* ou *"finalizar"*. No cadastro de cliente também dá para ditar:
 *"nome Maria Souza telefone 81 98888 7777"*. Funciona no Chrome, com internet.
 
-**Venda em dinheiro entra no caixa sozinha.** Despesa paga em dinheiro sai do caixa —
-e o aplicativo não deixa o caixa ficar negativo. Quando mandar dinheiro para a matriz,
-use **Caixa › 🏦 Depósito**.
+## Contas: para onde vai o dinheiro de cada venda
+
+O aplicativo já vem com três contas: **Caixa da loja** (dinheiro), **Conta PIX** e
+**Conta Cartões**. Cada venda cai sozinha na conta da forma de pagamento usada —
+vendeu no PIX, entra na conta do PIX; vendeu no crédito, entra na dos cartões.
+
+Na aba **Contas** você vê o saldo de cada uma e o total, e tem três botões:
+
+- **🔁 Transferir** — move dinheiro de uma conta para outra (depositou o caixa no
+  banco, sacou do PIX). O total da loja não muda; muda só onde o dinheiro está.
+- **📈 Receita** — entrada que não veio de uma venda (aluguel de andaime, por exemplo).
+- **📉 Despesa** — saída de qualquer conta.
+
+Dá para criar mais contas (uma segunda maquininha, a conta de outro banco) e
+escolher quais formas de pagamento caem em cada uma. Cada forma de pagamento fica
+em uma conta só — o aplicativo avisa se você tentar repetir.
+
+**Primeira vez:** informe o saldo que cada conta tem hoje em
+*Contas › tocar na conta › Editar conta › Saldo inicial*. Daí em diante o
+aplicativo mantém sozinho.
+
+## Custo real: o que faz o lucro ser verdade
+
+Ao lançar a entrada de mercadoria (**Estoque › produto › + Entrada**), informe o
+**custo unitário da nota**. O aplicativo recalcula o **custo médio** do produto
+misturando o que já estava em estoque com o que acabou de chegar, e mostra na
+hora como fica a margem.
+
+Isso importa mais do que parece: sem ele, o "lucro bruto" do relatório sai de um
+custo que alguém digitou uma vez e nunca mais atualizou. Quando o fornecedor
+reajusta, o número continua bonito na tela e errado na realidade.
+
+Marcando **"Lançar o pagamento numa conta"**, a compra também sai do saldo da
+conta escolhida e entra no relatório como despesa de fornecedor.
+
+## Imprimir o cupom
+
+Funciona com **impressora térmica Bluetooth** (as de bobina 58 mm ou 80 mm,
+padrão ESC/POS — as mais comuns no comércio).
+
+1. Pareie a impressora nas **configurações de Bluetooth do celular** (uma vez só).
+2. No aplicativo: **Mais › Ajustes › Impressora › Escolher impressora**.
+3. Escolha a largura do papel e toque em **🖨️ Testar**.
+
+Depois disso, o botão **🖨️ Imprimir** aparece ao fechar a venda e também no
+histórico, em *Mais › Vendas*, para reimprimir uma segunda via.
+
+> Se o teste sair com símbolos estranhos no lugar dos acentos, deixe ligada a
+> opção **"Imprimir sem acentos"**. Muitas impressoras baratas não têm a tabela
+> de caracteres do português.
+
+**Despesa paga em dinheiro sai do caixa** — e o aplicativo avisa se isso deixar o
+saldo negativo.
 
 ---
 

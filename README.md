@@ -83,10 +83,15 @@ Google Drive**.
 Abra em `https://SEU-ENDERECO/loja/` — ou publique a pasta `public/loja/` sozinha em
 qualquer hospedagem estática, pois não depende do servidor.
 
-Tem PDV com voz e comprovante, estoque, caixa, despesas, clientes e resultado.
-Não tem fábrica, multi-loja, usuários, mapa, catálogo nem campanhas — isso é do
-sistema completo. Guia passo a passo:
+Tem PDV com voz e comprovante, estoque com **custo médio real**, **contas
+separadas para dinheiro, PIX e cartões** (com transferências, receitas e
+despesas), **impressão do cupom em impressora térmica Bluetooth**, clientes,
+despesas e resultado. Não tem fábrica, multi-loja, usuários, mapa, catálogo nem
+campanhas — isso é do sistema completo. Guia passo a passo:
 **[deploy/COMO-USAR-O-APP-DA-LOJA.md](deploy/COMO-USAR-O-APP-DA-LOJA.md)**.
+
+Para trazer clientes, produtos e histórico de vendas de outro sistema, há um
+importador de CSV em **[ferramentas/](ferramentas/LEIA-ME.md)**.
 
 ### Instalador para Android (.apk)
 
@@ -219,6 +224,8 @@ server/
     http.js         helpers de requisição/resposta
   routes/           auth, admin, products, stock, customers, sales,
                     finance, stats, campaigns, catalog, ai, notifications
+ferramentas/
+  importar-csv.mjs  converte relatórios do sistema antigo em backup do aplicativo
 public/
   index.html        aplicação (SPA)
   catalogo.html     catálogo público
@@ -232,8 +239,9 @@ public/
   loja/             aplicativo de celular da Loja Caruaru (offline, dados no aparelho)
     index.html      aplicação instalável (PWA)
     sw.js           service worker: abre sem internet
-    js/db.js        banco local em IndexedDB
+    js/db.js        banco local em IndexedDB (contas, custo médio, migrações)
     js/backup.js    backup em arquivo e no Google Drive
+    js/impressora.js  cupom formatado para impressora térmica ESC/POS
     js/views/       uma tela por módulo
 ```
 

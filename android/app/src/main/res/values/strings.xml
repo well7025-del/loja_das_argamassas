@@ -6,4 +6,6 @@
     <string name="sem_camera">Nenhum aplicativo de câmera encontrado</string>
     <string name="sem_navegador">Nenhum aplicativo encontrado para abrir este link</string>
     <string name="sair_confirmar">Toque em voltar de novo para sair</string>
+    <string name="bluetooth_ok">Bluetooth liberado. Toque em imprimir de novo.</string>
+    <string name="bluetooth_negado">Sem a permissão de Bluetooth não dá para imprimir.</string>
 </resources>

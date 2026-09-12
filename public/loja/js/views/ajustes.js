@@ -1,9 +1,12 @@
 /* Ajustes da loja e, principalmente, o backup — a parte que salva o negócio
    se o celular quebrar, for roubado ou trocado. */
 import { config, definirConfig, apagarMovimento, espacoUsado, listar } from '../db.js';
+import {
+  impressoraDisponivel, listarImpressoras, impressoraEscolhida, escolherImpressora, imprimirTeste
+} from '../impressora.js';
 import { estado, guardarSenha, recalcularPendencias } from '../app.js';
 import {
-  el, limpar, erro, sucesso, aviso, painel, confirmar, cartao, dataHora,
+  el, limpar, erro, sucesso, aviso, painel, confirmar, cartao, dataHora, anexar,
   tamanho, numero, dinheiro, vazio, $
 } from '../ui.js';
 import {
@@ -19,12 +22,12 @@ export async function render(raiz) {
   await desenhar();
 
   async function desenhar() {
-    const [loja, status, espaco, intervalo, comFotos, temSenha, vendas] = await Promise.all([
+    const [loja, status, espaco, intervalo, comFotos, temSenha, vendas, impressora] = await Promise.all([
       config('loja', {}), statusBackup(), espacoUsado(), config('intervaloBackup', 1),
-      config('backupComFotos', true), config('senhaApp'), listar('vendas')
+      config('backupComFotos', true), config('senhaApp'), listar('vendas'), impressoraEscolhida()
     ]);
 
-    limpar(corpo).append(
+    anexar(limpar(corpo),
       /* ---------- Backup ---------- */
       cartao('☁️ Backup dos dados', el('div', { class: 'cartao-corpo' }, [
         status.ultimo
@@ -72,6 +75,20 @@ export async function render(raiz) {
         el('div', { class: 'pq mudo mb', text: 'Aparecem no comprovante enviado ao cliente.' }),
         el('button', { class: 'btn btn-vazio btn-bloco', onclick: () => editarLoja(loja) },
           `${loja.nome || 'Loja Caruaru'}${loja.telefone ? ' · ' + loja.telefone : ''}`)
+      ])),
+
+      /* ---------- Impressora ---------- */
+      cartao('🖨️ Impressora de cupom', el('div', { class: 'cartao-corpo' }, [
+        impressoraDisponivel()
+          ? el('div', {}, [
+              el('div', { class: 'pq mudo mb', text: impressora
+                ? `Imprimindo em: ${impressora.nome}`
+                : 'Nenhuma impressora escolhida. Pareie a impressora nas configurações de Bluetooth do celular e escolha aqui.' }),
+              el('button', { class: 'btn btn-vazio btn-bloco', onclick: escolherAImpressora },
+                impressora ? 'Trocar impressora ou testar' : 'Escolher impressora')
+            ])
+          : el('div', { class: 'aviso aviso-azul', style: { margin: 0 } },
+              'A impressão de cupom funciona no aplicativo instalado (APK), com uma impressora térmica Bluetooth pareada no celular.')
       ])),
 
       /* ---------- Segurança ---------- */
@@ -245,6 +262,72 @@ export async function render(raiz) {
           } catch (e) { erro(e.message); }
         }
       }]
+    });
+  }
+
+  /* ---------------- Impressora ---------------- */
+  async function escolherAImpressora() {
+    const dispositivos = listarImpressoras();
+    const atual = await impressoraEscolhida();
+    const colunas = el('select', {}, [
+      el('option', { value: '32', text: 'Bobina de 58 mm (32 colunas)' }),
+      el('option', { value: '48', text: 'Bobina de 80 mm (48 colunas)' })
+    ]);
+    colunas.value = String(await config('impressoraColunas', 32));
+    const semAcentos = el('input', { type: 'checkbox', checked: (await config('impressoraSemAcentos', true)) !== false });
+
+    const lista = el('div', { class: 'lista' });
+    let escolhida = atual;
+
+    function desenharLista() {
+      limpar(lista);
+      if (!dispositivos.length) {
+        anexar(lista, el('div', { class: 'aviso aviso-amarelo', style: { margin: '0' } },
+          'Nenhuma impressora pareada. Abra Configurações › Bluetooth do celular, pareie a impressora e volte aqui.'));
+        return;
+      }
+      for (const d of dispositivos) {
+        anexar(lista, el('button', {
+          class: 'item', onclick: () => { escolhida = d; desenharLista(); }
+        }, [
+          el('span', { style: { fontSize: '20px' }, text: '🖨️' }),
+          el('div', { class: 'info' }, [
+            el('div', { class: 'titulo', text: d.nome }),
+            el('div', { class: 'sub', text: d.endereco })
+          ]),
+          escolhida?.endereco === d.endereco ? el('span', { class: 'etiqueta et-verde', text: '✓ escolhida' }) : null
+        ]));
+      }
+    }
+    desenharLista();
+
+    painel({
+      titulo: 'Impressora de cupom',
+      corpo: el('div', {}, [
+        el('div', { class: 'aviso aviso-azul' },
+          'A impressora precisa estar ligada e já pareada no Bluetooth do celular.'),
+        lista,
+        el('div', { class: 'campo mt' }, [el('label', { text: 'Largura do papel' }), colunas]),
+        el('label', { class: 'check' }, [semAcentos,
+          el('span', { text: 'Imprimir sem acentos (compatível com mais impressoras)' })]),
+        el('div', { class: 'pq mudo', text: 'Se o teste sair com símbolos estranhos no lugar dos acentos, mantenha esta opção ligada.' })
+      ]),
+      acoes: [
+        { rotulo: '🖨️ Testar', acao: async () => {
+          if (!escolhida) { erro('Escolha a impressora na lista'); return; }
+          await definirConfig('impressoraColunas', Number(colunas.value));
+          await definirConfig('impressoraSemAcentos', semAcentos.checked);
+          try { aviso('Enviando teste…'); sucesso(await imprimirTeste(escolhida.endereco)); }
+          catch (e) { erro(e.message); }
+        } },
+        { rotulo: 'Salvar', class: 'btn-primario', acao: async (fechar) => {
+          await escolherImpressora(escolhida || null);
+          await definirConfig('impressoraColunas', Number(colunas.value));
+          await definirConfig('impressoraSemAcentos', semAcentos.checked);
+          sucesso(escolhida ? `Impressora: ${escolhida.nome}` : 'Impressora removida');
+          fechar(); desenhar();
+        } }
+      ]
     });
   }
 

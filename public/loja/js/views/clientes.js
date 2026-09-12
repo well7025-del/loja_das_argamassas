@@ -64,7 +64,9 @@ anexar(limpar(corpo),
           kpi({ rot: 'Compras', val: numero(resumo?.compras || 0) }),
           kpi({ rot: 'Total gasto', val: dinheiro(resumo?.total || 0), cor: 'verde' })
         ]),
-        el('div', { class: 'pq mudo mb', text: [telefoneBR(cliente.telefone), cliente.cidade].filter(Boolean).join(' · ') || 'Sem contato cadastrado' }),
+        el('div', { class: 'pq mudo mb', text:
+          [telefoneBR(cliente.telefone), cliente.cidade, cliente.endereco, cliente.email, cliente.doc]
+            .filter(Boolean).join(' · ') || 'Sem contato cadastrado' }),
         cliente.obs ? el('div', { class: 'aviso aviso-amarelo', text: cliente.obs }) : null,
         compras.length
           ? el('div', { class: 'cartao' }, el('div', { class: 'lista rolagem' }, compras.slice(0, 40).map(v =>
@@ -89,6 +91,9 @@ anexar(limpar(corpo),
     const nome = el('input', { type: 'text', value: cliente?.nome || '' });
     const telefone = el('input', { type: 'tel', value: cliente?.telefone || '', placeholder: '(81) 90000-0000' });
     const cidade = el('input', { type: 'text', value: cliente?.cidade || '' });
+    const endereco = el('input', { type: 'text', value: cliente?.endereco || '' });
+    const email = el('input', { type: 'email', value: cliente?.email || '' });
+    const doc = el('input', { type: 'text', value: cliente?.doc || '', placeholder: 'CPF ou CNPJ' });
     const obs = el('textarea', { placeholder: 'Observações, obra em andamento, condições…' });
     obs.value = cliente?.obs || '';
     const statusFala = el('div', { class: 'voz-status' });
@@ -125,6 +130,11 @@ anexar(limpar(corpo),
         el('div', { class: 'campo mt' }, [el('label', { text: 'Nome *' }), nome]),
         el('div', { class: 'campo' }, [el('label', { text: 'WhatsApp' }), telefone]),
         el('div', { class: 'campo' }, [el('label', { text: 'Cidade / bairro' }), cidade]),
+        el('div', { class: 'campo' }, [el('label', { text: 'Endereço' }), endereco]),
+        el('div', { class: 'linha' }, [
+          el('div', { class: 'campo' }, [el('label', { text: 'E-mail' }), email]),
+          el('div', { class: 'campo' }, [el('label', { text: 'CPF / CNPJ' }), doc])
+        ]),
         el('div', { class: 'campo' }, [el('label', { text: 'Observações' }), obs])
       ]),
       acoes: [
@@ -139,7 +149,8 @@ anexar(limpar(corpo),
           await salvar('clientes', {
             ...(cliente || { criadoEm: new Date().toISOString() }),
             nome: nome.value.trim(), telefone: telefone.value.trim(),
-            cidade: cidade.value.trim(), obs: obs.value.trim()
+            cidade: cidade.value.trim(), endereco: endereco.value.trim(),
+            email: email.value.trim(), doc: doc.value.trim(), obs: obs.value.trim()
           });
           sucesso(cliente ? 'Cliente atualizado' : 'Cliente cadastrado');
           fechar(); desenhar();

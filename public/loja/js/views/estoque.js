@@ -1,9 +1,9 @@
 /* Estoque e cadastro de produtos: entrada de mercadoria, preço e mínimo. */
-import { listar, salvar, remover, entradaEstoque, obter } from '../db.js';
+import { listar, salvar, remover, entradaEstoque, saldos } from '../db.js';
 import { recalcularPendencias } from '../app.js';
 import {
   el, limpar, dinheiro, numero, percentual, erro, sucesso, painel, vazio,
-  confirmar, atrasar, dataHora
+  confirmar, atrasar, dataHora, anexar
 } from '../ui.js';
 
 export async function render(raiz) {
@@ -74,12 +74,16 @@ export async function render(raiz) {
         produto.movimentos?.length
           ? el('div', {}, [
               el('div', { class: 'pq negrito mb', text: 'Últimas entradas e saídas' }),
-              el('div', { class: 'lista rolagem' }, [...produto.movimentos].reverse().slice(0, 12).map(m =>
+              el('div', { class: 'lista rolagem' }, [...produto.movimentos].reverse().slice(0, 15).map(m =>
                 el('div', { class: 'item' }, [
                   el('div', { class: 'info' }, [
                     el('div', { class: 'titulo', style: { color: m.qtd >= 0 ? 'var(--verde-700)' : 'var(--vermelho-600)' },
                                 text: `${m.qtd > 0 ? '+' : ''}${numero(m.qtd)} ${produto.unidade}` }),
-                    el('div', { class: 'sub', text: `${dataHora(m.data)}${m.obs ? ' · ' + m.obs : ''}` })
+                    el('div', { class: 'sub', text: [
+                      dataHora(m.data),
+                      m.custoUnitario != null ? `custo ${dinheiro(m.custoUnitario)}` : null,
+                      m.fornecedor, m.obs
+                    ].filter(Boolean).join(' · ') })
                   ]),
                   el('span', { class: 'pq mudo', text: `saldo ${numero(m.saldo)}` })
                 ])))
@@ -93,34 +97,93 @@ export async function render(raiz) {
     });
   }
 
-  function movimentar(produto) {
+  /**
+   * Entrada de mercadoria com o custo real da nota.
+   *
+   * O custo do produto passa a ser a média ponderada entre o que já havia e o
+   * que chegou — é isso que faz o lucro do relatório acompanhar o reajuste do
+   * fornecedor, em vez de ficar preso no preço cadastrado uma vez.
+   */
+  async function movimentar(produto) {
+    const contas = await saldos();
     const tipo = el('select', {}, [
       el('option', { value: 'entrada', text: 'Entrada — chegou mercadoria' }),
       el('option', { value: 'saida', text: 'Saída — perda, quebra ou acerto' })
     ]);
     const qtd = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: '1' });
-    const obs = el('input', { type: 'text', placeholder: 'Observação (nota fiscal, motivo…)' });
+    const custo = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: produto.custo || 0 });
+    const fornecedor = el('input', { type: 'text', placeholder: 'Nome do fornecedor (opcional)' });
+    const obs = el('input', { type: 'text', placeholder: 'Nota fiscal, motivo…' });
+    const pagar = el('input', { type: 'checkbox' });
+    const conta = el('select', { disabled: true }, contas.map(c =>
+      el('option', { value: c.id, text: `${c.nome} — ${dinheiro(c.saldo)}` })));
+    const previsao = el('div', { class: 'aviso aviso-azul' });
+    const blocoEntrada = el('div');
+
+    function recalcular() {
+      const entrada = tipo.value === 'entrada';
+      blocoEntrada.hidden = !entrada;
+      conta.disabled = !pagar.checked || !entrada;
+
+      const q = Number(qtd.value) || 0;
+      const cu = Number(custo.value) || 0;
+      const saldoAtual = Math.max(0, produto.estoque);
+      const medio = entrada && q > 0
+        ? (saldoAtual * (produto.custo || 0) + q * cu) / (saldoAtual + q)
+        : (produto.custo || 0);
+      const margem = produto.preco > 0 ? (produto.preco - medio) / produto.preco * 100 : 0;
+      previsao.textContent = entrada
+        ? `Custo médio passa de ${dinheiro(produto.custo || 0)} para ${dinheiro(medio)} · ` +
+          `margem em ${dinheiro(produto.preco)} fica ${percentual(margem)}` +
+          (pagar.checked ? ` · pagamento de ${dinheiro(q * cu)}` : '')
+        : `Custo médio continua em ${dinheiro(produto.custo || 0)}.`;
+    }
+    [tipo, qtd, custo].forEach(c => c.addEventListener('input', recalcular));
+    tipo.addEventListener('change', recalcular);
+    pagar.addEventListener('change', recalcular);
+
+    anexar(blocoEntrada,
+      el('div', { class: 'campo' }, [
+        el('label', {}, ['Custo unitário da nota (R$) ', el('span', { class: 'dica', text: '— o que você pagou agora' })]),
+        custo
+      ]),
+      el('div', { class: 'campo' }, [el('label', { text: 'Fornecedor' }), fornecedor]),
+      el('label', { class: 'check' }, [pagar, el('span', { text: 'Lançar o pagamento numa conta' })]),
+      el('div', { class: 'campo' }, [conta])
+    );
 
     painel({
       titulo: `Estoque — ${produto.nome}`,
       corpo: el('div', {}, [
-        el('div', { class: 'aviso aviso-azul', text: `Agora há ${numero(produto.estoque)} ${produto.unidade}.` }),
+        el('div', { class: 'aviso aviso-azul', text:
+          `Agora há ${numero(produto.estoque)} ${produto.unidade}, com custo médio de ${dinheiro(produto.custo || 0)}.` }),
         el('div', { class: 'campo' }, [el('label', { text: 'O que aconteceu' }), tipo]),
         el('div', { class: 'campo' }, [el('label', { text: `Quantidade (${produto.unidade})` }), qtd]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Observação' }), obs])
+        blocoEntrada,
+        el('div', { class: 'campo' }, [el('label', { text: 'Observação' }), obs]),
+        previsao
       ]),
       acoes: [{
         rotulo: 'Confirmar', class: 'btn-primario', acao: async (fechar) => {
           const q = Number(qtd.value);
           if (!q || q <= 0) { erro('Informe a quantidade'); return; }
+          const entrada = tipo.value === 'entrada';
           try {
-            const saldo = await entradaEstoque(produto.id, tipo.value === 'saida' ? -q : q, obs.value);
-            sucesso(`Novo saldo: ${numero(saldo)} ${produto.unidade}`);
+            const r = await entradaEstoque(produto.id, entrada ? q : -q, {
+              custoUnitario: entrada ? (Number(custo.value) || 0) : null,
+              fornecedor: fornecedor.value.trim(),
+              observacao: obs.value.trim(),
+              contaId: entrada && pagar.checked ? Number(conta.value) : null
+            });
+            sucesso(entrada && r.custoMedio !== r.custoAnterior
+              ? `Saldo ${numero(r.saldo)} ${produto.unidade} · custo médio ${dinheiro(r.custoMedio)}`
+              : `Novo saldo: ${numero(r.saldo)} ${produto.unidade}`);
             fechar(); desenhar(); recalcularPendencias();
           } catch (e) { erro(e.message); }
         }
       }]
     });
+    recalcular();
   }
 
   function formulario(produto = null) {

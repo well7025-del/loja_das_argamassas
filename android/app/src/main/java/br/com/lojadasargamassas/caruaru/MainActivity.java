@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -50,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private PonteVoz ponteVoz;
+    private PonteImpressora ponteImpressora;
 
     private ValueCallback<Uri[]> retornoArquivos;
     private Uri uriFotoPendente;
@@ -58,6 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private ActivityResultLauncher<Intent> escolherArquivo;
     private ActivityResultLauncher<String> pedirPermissaoCamera;
     private ActivityResultLauncher<String> pedirPermissaoMicrofone;
+    private ActivityResultLauncher<String> pedirPermissaoBluetooth;
 
     @Override
     protected void onCreate(@Nullable Bundle estado) {
@@ -70,7 +73,9 @@ public class MainActivity extends AppCompatActivity {
         configurarWebView();
 
         ponteVoz = new PonteVoz(this, webView);
+        ponteImpressora = new PonteImpressora(this, webView);
         webView.addJavascriptInterface(ponteVoz, "AndroidVoz");
+        webView.addJavascriptInterface(ponteImpressora, "AndroidImpressora");
         webView.addJavascriptInterface(new PonteApp(this), "AndroidApp");
 
         if (estado == null) {
@@ -112,6 +117,12 @@ public class MainActivity extends AppCompatActivity {
                     } else {
                         ponteVoz.avisarErro("Sem permissão de microfone. Libere nas configurações do aplicativo.");
                     }
+                });
+
+        pedirPermissaoBluetooth = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(), concedida -> {
+                    Toast.makeText(this, concedida ? R.string.bluetooth_ok : R.string.bluetooth_negado,
+                            Toast.LENGTH_LONG).show();
                 });
     }
 
@@ -266,6 +277,13 @@ public class MainActivity extends AppCompatActivity {
         pedirPermissaoMicrofone.launch(Manifest.permission.RECORD_AUDIO);
     }
 
+    /** Android 12 em diante exige a permissão em tempo de execução para falar com a impressora. */
+    void pedirBluetooth() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            pedirPermissaoBluetooth.launch(Manifest.permission.BLUETOOTH_CONNECT);
+        }
+    }
+
     boolean temMicrofone() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED;
@@ -295,6 +313,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         ponteVoz.encerrar();
+        ponteImpressora.encerrar();
         cancelarEscolha();
         if (webView != null) {
             webView.destroy();
