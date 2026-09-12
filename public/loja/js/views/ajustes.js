@@ -9,7 +9,8 @@ import {
 import {
   gerarBackup, compartilharArquivo, baixarArquivo, lerArquivo, restaurar,
   enviarParaDrive, listarBackupsDrive, baixarDoDrive, autorizarDrive,
-  statusBackup, registrarBackupLocal, driveConfigurado, PASTA_DRIVE
+  statusBackup, registrarBackupLocal, driveConfigurado, driveDisponivel,
+  dentroDoApp, PASTA_DRIVE
 } from '../backup.js';
 
 export async function render(raiz) {
@@ -49,15 +50,21 @@ export async function render(raiz) {
         ]),
 
         el('div', { class: 'grade2 mt' }, [
-          el('button', { class: 'btn btn-vazio', onclick: configurarDrive },
-            status.driveAtivo ? '⚙️ Google Drive' : '🔗 Ligar o Drive'),
+          driveDisponivel()
+            ? el('button', { class: 'btn btn-vazio', onclick: configurarDrive },
+                status.driveAtivo ? '⚙️ Google Drive' : '🔗 Ligar o Drive')
+            : el('button', { class: 'btn btn-vazio', onclick: backupAgora }, '☁️ Enviar ao Drive'),
           el('button', { class: 'btn btn-vazio', onclick: restaurarBackup }, '↩️ Restaurar')
         ]),
         status.driveAtivo
           ? el('button', { class: 'btn btn-vazio btn-bloco mt', onclick: verBackupsDrive }, '📂 Ver backups no Drive')
           : el('div', { class: 'aviso aviso-azul mt' },
-              'Sem o Drive ligado, o backup abre o menu de compartilhamento do celular — ' +
-              'basta escolher o Google Drive na lista. Ligar o Drive faz isso sozinho.')
+              dentroDoApp()
+                ? 'Neste aplicativo o backup automático já grava uma cópia em ' +
+                  'Downloads/LojaCaruaru todo dia. Para mandar ao Google Drive, toque no botão ' +
+                  'acima e escolha o Drive na lista que abrir.'
+                : 'Sem o Drive ligado, o backup abre o menu de compartilhamento do celular — ' +
+                  'basta escolher o Google Drive na lista. Ligar o Drive faz isso sozinho.')
       ])),
 
       /* ---------- Loja ---------- */
@@ -111,8 +118,9 @@ export async function render(raiz) {
     try {
       const destino = await compartilharArquivo(arquivo);
       await registrarBackupLocal(arquivo.nome);
-      sucesso(destino === 'compartilhado'
-        ? 'Escolha o Google Drive na lista para guardar o arquivo'
+      sucesso(
+        dentroDoApp() ? 'Cópia salva no celular. Escolha o Google Drive na lista que abriu.'
+        : destino === 'compartilhado' ? 'Escolha o Google Drive na lista para guardar o arquivo'
         : `Arquivo salvo no celular (${arquivo.nome})`);
       desenhar(); recalcularPendencias();
     } catch (e) {

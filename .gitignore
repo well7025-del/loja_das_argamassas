@@ -8,3 +8,11 @@ uploads/*
 .env
 .DS_Store
 *.log
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/propria.jks
+*.apk

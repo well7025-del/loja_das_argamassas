@@ -1,0 +1,79 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'br.com.lojadasargamassas.caruaru'
+    compileSdk 34
+
+    buildFeatures {
+        buildConfig true      // necessario: o codigo usa BuildConfig.DEBUG e VERSION_NAME
+    }
+
+    defaultConfig {
+        applicationId "br.com.lojadasargamassas.caruaru"
+        minSdk 24                 // Android 7.0 — cobre praticamente todo aparelho em uso
+        targetSdk 34
+        // A automacao passa -PversionCode=<numero do build> para que cada APK
+        // possa ser instalado por cima do anterior sem perder os dados.
+        versionCode ((project.findProperty('versionCode') ?: '1') as int)
+        versionName (project.findProperty('versionName') ?: '1.0')
+    }
+
+    signingConfigs {
+        release {
+            def arquivo = System.getenv("CHAVE_ARQUIVO") ?: project.property("CHAVE_ARQUIVO")
+            storeFile file(arquivo)
+            storePassword System.getenv("CHAVE_SENHA") ?: project.property("CHAVE_SENHA")
+            keyAlias System.getenv("CHAVE_ALIAS") ?: project.property("CHAVE_ALIAS")
+            keyPassword System.getenv("CHAVE_ALIAS_SENHA") ?: project.property("CHAVE_ALIAS_SENHA")
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false          // o app e pequeno; sem ofuscacao o build e mais previsivel
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'   // WebViewAssetLoader: serve os assets como origem https
+    implementation 'androidx.core:core:1.13.1'
+}
+
+/**
+ * O aplicativo web vive em public/loja. Copiamos para os assets a cada build,
+ * assim nao existe uma segunda copia do codigo dentro do projeto Android.
+ */
+def origemApp = file("${rootDir}/../public/loja")
+def pastaAssets = layout.buildDirectory.dir("assets-app").get().asFile
+def destinoApp = new File(pastaAssets, "loja")
+
+tasks.register('copiarAplicativoWeb', Copy) {
+    description = 'Copia public/loja para os assets do APK'
+    from(origemApp) {
+        exclude 'sw.js'          // dentro do APK os arquivos ja sao locais: o service worker so atrapalharia
+    }
+    into destinoApp
+    doFirst {
+        if (!origemApp.exists()) {
+            throw new GradleException("Pasta ${origemApp} nao encontrada. Rode o build a partir do repositorio completo.")
+        }
+    }
+}
+
+android.sourceSets.main.assets.srcDirs += pastaAssets
+tasks.named('preBuild') { dependsOn 'copiarAplicativoWeb' }

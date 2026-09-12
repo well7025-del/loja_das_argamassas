@@ -1,0 +1,106 @@
+# Gera o instalador (.apk) do aplicativo da Loja Caruaru.
+#
+# Rodar: aba Actions do repositorio -> "Gerar APK da Loja Caruaru" -> Run workflow.
+# Ao terminar, o arquivo aparece em Releases, pronto para baixar no celular.
+name: Gerar APK da Loja Caruaru
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - 'public/loja/**'
+      - '.github/workflows/apk.yml'
+
+permissions:
+  contents: write
+
+env:
+  # Chave propria definida nos segredos do repositorio (opcional).
+  TEM_CHAVE_PROPRIA: ${{ secrets.KEYSTORE_BASE64 != '' }}
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar o Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Conferir o SDK do Android
+        run: |
+          set -e
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "::error::SDK do Android nao encontrado neste runner"
+            exit 1
+          fi
+          echo "SDK em $SDK"
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "platform-tools" > /dev/null
+          fi
+
+      - name: Usar a chave de assinatura propria
+        if: env.TEM_CHAVE_PROPRIA == 'true'
+        env:
+          CHAVE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          SENHA: ${{ secrets.KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.KEY_ALIAS }}
+          SENHA_ALIAS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -e
+          printf '%s' "$CHAVE_BASE64" | base64 -d > android/app/propria.jks
+          {
+            echo "CHAVE_ARQUIVO=propria.jks"
+            echo "CHAVE_SENHA=$SENHA"
+            echo "CHAVE_ALIAS=$ALIAS"
+            echo "CHAVE_ALIAS_SENHA=$SENHA_ALIAS"
+          } >> "$GITHUB_ENV"
+
+      - name: Montar o APK
+        working-directory: android
+        run: |
+          set -e
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PversionCode=${{ github.run_number }} \
+            -PversionName=1.${{ github.run_number }}
+
+      - name: Renomear o arquivo
+        id: arquivo
+        run: |
+          set -e
+          ORIGEM=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          if [ -z "$ORIGEM" ]; then echo "::error::Nenhum APK foi gerado"; exit 1; fi
+          NOME="loja-caruaru-v1.${{ github.run_number }}.apk"
+          cp "$ORIGEM" "$NOME"
+          echo "nome=$NOME" >> "$GITHUB_OUTPUT"
+          ls -lh "$NOME"
+
+      - name: Guardar como artefato do build
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-loja-caruaru
+          path: ${{ steps.arquivo.outputs.nome }}
+          retention-days: 90
+
+      - name: Publicar para download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.arquivo.outputs.nome }}
+        run: |
+          set -e
+          TAG="app-v1.${{ github.run_number }}"
+          gh release create "$TAG" "$APK" \
+            --title "Aplicativo da Loja Caruaru — versão 1.${{ github.run_number }}" \
+            --notes-file deploy/notas-apk.md
+          echo "APK publicado em $TAG"

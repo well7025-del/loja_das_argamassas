@@ -28,8 +28,26 @@ export async function gerarBackup({ incluirFotos = true } = {}) {
   };
 }
 
+/** true quando roda dentro do aplicativo instalado no celular (APK). */
+export const dentroDoApp = () => Boolean(window.AndroidApp?.dentroDoApp?.());
+
+/**
+ * Grava o backup pelo Android: uma cópia fica em Downloads/LojaCaruaru e,
+ * quando `compartilhar` é verdadeiro, abre o menu onde o Google Drive aparece.
+ */
+async function salvarPeloAndroid({ nome, blob }, compartilhar) {
+  const texto = await blob.text();
+  const resposta = String(window.AndroidApp.salvarBackup(nome, texto, compartilhar) || '');
+  if (resposta.startsWith('erro:')) throw new Error(resposta.slice(5));
+  return resposta.startsWith('salvo:') ? { destino: 'aparelho', onde: resposta.slice(6) } : { destino: 'compartilhado' };
+}
+
 /** Abre o menu de compartilhamento do celular (Google Drive, e-mail, WhatsApp...). */
 export async function compartilharArquivo({ nome, blob }) {
+  if (dentroDoApp()) {
+    const r = await salvarPeloAndroid({ nome, blob }, true);
+    return r.onde ? `salvo em ${r.onde}` : 'compartilhado';
+  }
   const arquivo = new File([blob], nome, { type: 'application/json' });
   if (navigator.canShare?.({ files: [arquivo] })) {
     await navigator.share({ files: [arquivo], title: 'Backup da Loja das Argamassas' });
@@ -62,7 +80,15 @@ export const restaurar = (conteudo, modo) => importarTudo(conteudo, modo);
 let clienteToken = null;
 let token = null;          // { valor, expiraEm }
 
-export const driveConfigurado = async () => Boolean(await config('googleClientId'));
+/**
+ * O Google recusa a tela de autorização dentro de um WebView, então o envio
+ * automático ao Drive só existe quando o aplicativo é aberto pelo navegador.
+ * No APK o backup é gravado no aparelho e enviado pelo menu de compartilhamento.
+ */
+export const driveDisponivel = () => !dentroDoApp();
+
+export const driveConfigurado = async () =>
+  driveDisponivel() && Boolean(await config('googleClientId'));
 
 function carregarBiblioteca() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -213,14 +239,36 @@ export async function statusBackup() {
 export async function backupAutomatico() {
   const status = await statusBackup();
   if (!status.atrasado) return { feito: false, motivo: 'em dia' };
-  if (!status.driveAtivo) return { feito: false, motivo: 'pendente' };
+
+  let arquivo;
   try {
-    const arquivo = await gerarBackup({ incluirFotos: await config('backupComFotos', true) });
-    await enviarParaDrive(arquivo);
-    return { feito: true, arquivo: arquivo.nome };
+    arquivo = await gerarBackup({ incluirFotos: await config('backupComFotos', true) });
   } catch (e) {
     return { feito: false, motivo: 'erro', erro: e.message };
   }
+
+  if (status.driveAtivo) {
+    try {
+      await enviarParaDrive(arquivo);
+      return { feito: true, destino: 'drive', arquivo: arquivo.nome };
+    } catch (e) {
+      return { feito: false, motivo: 'erro', erro: e.message };
+    }
+  }
+
+  // No aplicativo instalado, guarda a cópia no próprio aparelho sem incomodar
+  // o vendedor. Enviar ao Drive continua a um toque, em Ajustes.
+  if (dentroDoApp()) {
+    try {
+      const r = await salvarPeloAndroid(arquivo, false);
+      await registrarBackupLocal(arquivo.nome);
+      return { feito: true, destino: 'aparelho', onde: r.onde, arquivo: arquivo.nome };
+    } catch (e) {
+      return { feito: false, motivo: 'erro', erro: e.message };
+    }
+  }
+
+  return { feito: false, motivo: 'pendente' };
 }
 
 export async function registrarBackupLocal(nome) {

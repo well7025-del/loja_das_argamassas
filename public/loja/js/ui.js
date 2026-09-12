@@ -56,9 +56,16 @@ export const numeroWhatsApp = (telefone) => {
   if (d.length === 10 || d.length === 11) d = '55' + d;
   return d.length >= 12 ? d : null;
 };
-export const abrirWhatsApp = (numero, texto) =>
-  window.open(numero ? `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`
-                     : `https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank', 'noopener');
+export const abrirWhatsApp = (numero, texto) => {
+  const url = numero ? `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`
+                     : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+  // dentro do aplicativo Android o link precisa sair do WebView
+  if (window.AndroidApp?.abrirLink) window.AndroidApp.abrirLink(url);
+  else window.open(url, '_blank', 'noopener');
+};
+
+/** true quando está rodando dentro do aplicativo instalado (APK), não no navegador. */
+export const dentroDoApp = () => Boolean(window.AndroidApp?.dentroDoApp?.());
 
 /* ---------------- Avisos ---------------- */
 export function aviso(mensagem, tipo = '') {

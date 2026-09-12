@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Tema.LojaCaruaru" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/azul_escuro</item>
+        <item name="android:navigationBarColor">@color/branco</item>
+        <item name="android:windowBackground">@color/fundo</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+</resources>

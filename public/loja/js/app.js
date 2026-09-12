@@ -194,8 +194,17 @@ function boasVindas() {
 
 /* ---------------- Início ---------------- */
 async function iniciar() {
+  // No navegador o service worker é o que faz o app abrir sem internet.
+  // Dentro do APK os arquivos já são locais: registrar só criaria cache velho
+  // depois de uma atualização do aplicativo.
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    if (window.AndroidApp?.dentroDoApp?.()) {
+      navigator.serviceWorker.getRegistrations()
+        .then(lista => lista.forEach(r => r.unregister()))
+        .catch(() => {});
+    } else {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
   }
 
   const senha = await config('senhaApp');
@@ -209,10 +218,15 @@ async function iniciar() {
 
   // Backup automático assim que houver internet, sem travar a abertura do app
   setTimeout(async () => {
-    if (!navigator.onLine) return;
+    // o backup no próprio aparelho não depende de conexão; o envio ao Drive sim
+    if (!navigator.onLine && !window.AndroidApp?.dentroDoApp?.()) return;
     const r = await backupAutomatico();
-    if (r.feito) { aviso('Backup enviado para o Google Drive', 'ok'); recalcularPendencias(); }
-    else if (r.motivo === 'erro') console.warn('Backup automático:', r.erro);
+    if (r.feito) {
+      aviso(r.destino === 'drive' ? 'Backup enviado para o Google Drive' : 'Backup salvo no aparelho', 'ok');
+      recalcularPendencias();
+    } else if (r.motivo === 'erro') {
+      console.warn('Backup automático:', r.erro);
+    }
   }, 2500);
 }
 

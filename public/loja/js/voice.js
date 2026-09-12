@@ -4,14 +4,43 @@
    ============================================================ */
 
 const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
+/** Dentro do aplicativo Android o reconhecimento vem do próprio sistema. */
+const pontePonte = () => window.AndroidVoz;
 
-export const vozDisponivel = () => Boolean(Reconhecimento);
+export const vozDisponivel = () => {
+  const ponte = pontePonte();
+  if (ponte) { try { return ponte.disponivel(); } catch { return false; } }
+  return Boolean(Reconhecimento);
+};
+
+/**
+ * Reconhecedor sobre a ponte nativa do Android.
+ * O WebView não tem a API de voz do navegador, então o áudio é reconhecido
+ * pelo sistema e o texto volta por `window.__vozAndroid`.
+ */
+function reconhecedorAndroid(ponte, { onTexto, onEstado, onErro, continuo }) {
+  let ativo = false;
+  window.__vozAndroid = {
+    parcial: (texto) => onTexto?.(texto, true),
+    final: (texto) => onTexto?.(texto, false),
+    estado: (situacao) => { ativo = situacao === 'ouvindo'; onEstado?.(situacao); },
+    erro: (mensagem) => onErro?.(mensagem)
+  };
+  return {
+    iniciar() { try { ponte.iniciar(Boolean(continuo)); } catch { onErro?.('Não consegui ligar o microfone.'); } },
+    parar() { try { ponte.parar(); } catch {} },
+    alternar() { ativo ? this.parar() : this.iniciar(); },
+    get ativo() { return ativo; }
+  };
+}
 
 /**
  * Cria um reconhecedor de fala em pt-BR.
  * onTexto(textoFinal, ehParcial) é chamado a cada resultado.
  */
 export function criarReconhecedor({ onTexto, onEstado, onErro, continuo = true } = {}) {
+  const ponte = pontePonte();
+  if (ponte) return reconhecedorAndroid(ponte, { onTexto, onEstado, onErro, continuo });
   if (!Reconhecimento) return null;
   const r = new Reconhecimento();
   r.lang = 'pt-BR';

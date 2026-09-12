@@ -1,0 +1,5 @@
+// Projeto Android do aplicativo da Loja Caruaru.
+// O conteudo (HTML/CSS/JS) vem de public/loja e e copiado para os assets no build.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

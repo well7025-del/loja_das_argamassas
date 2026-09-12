@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Loja Caruaru</string>
+    <string name="escolher_foto">Foto do comprovante</string>
+    <string name="tirar_foto">Tirar foto</string>
+    <string name="compartilhar_backup">Enviar backup para…</string>
+    <string name="sem_camera">Nenhum aplicativo de câmera encontrado</string>
+    <string name="sem_navegador">Nenhum aplicativo encontrado para abrir este link</string>
+    <string name="sair_confirmar">Toque em voltar de novo para sair</string>
+</resources>

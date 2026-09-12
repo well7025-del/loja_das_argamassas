@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- O backup dos dados da loja e feito pelo proprio aplicativo (arquivo + Google Drive).
+     Deixamos o backup automatico do Android de fora para nao restaurar dados
+     desatualizados por cima dos atuais sem o dono saber. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>
