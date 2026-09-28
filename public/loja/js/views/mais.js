@@ -9,8 +9,12 @@ const ITENS = [
   { rota: 'vendas',    icone: '📄', titulo: 'Vendas',    texto: 'Histórico, comprovantes e reenvio de recibo' },
   { rota: 'clientes',  icone: '👥', titulo: 'Clientes',  texto: 'Cadastro e histórico de compras' },
   { rota: 'despesas',  icone: '📉', titulo: 'Despesas',  texto: 'Aluguel, energia, salário e o resto' },
-  { rota: 'relatorio', icone: '📊', titulo: 'Resultado', texto: 'Faturamento, lucro e o que mais vende' },
-  { rota: 'ajustes',   icone: '⚙️', titulo: 'Ajustes e backup', texto: 'Dados da loja, senha e cópia no Google Drive' }
+  { rota: 'relatorio', icone: '📊', titulo: 'Resultado', texto: 'Faturamento, lucro e o que mais vende, por período' },
+  { rota: 'conciliacao', icone: '🏦', titulo: 'Conferência do extrato', texto: 'Casa o extrato do banco e da maquininha com as vendas' },
+  { rota: 'comissoes', icone: '💸', titulo: 'Comissões', texto: 'Apuração por produto e relatório para pagamento' },
+  { rota: 'inventario', icone: '📋', titulo: 'Inventário', texto: 'Contagem cega do estoque com relatório de divergências' },
+  { rota: 'auditoria', icone: '🔎', titulo: 'Auditoria', texto: 'Cancelamentos, ajustes, preços e razão das contas' },
+  { rota: 'ajustes',   icone: '⚙️', titulo: 'Ajustes e backup', texto: 'Dados da loja, PIX, senha e cópia no Google Drive' }
 ];
 
 export async function render(raiz) {

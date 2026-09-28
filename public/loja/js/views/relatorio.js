@@ -1,6 +1,8 @@
 /* Resultado da loja: o essencial para decidir — sem relatório que ninguém lê. */
-import { listar } from '../db.js';
-import { el, limpar, kpi, dinheiro, numero, percentual, barras, linha, dataCurta, vazio, cartao, anexar } from '../ui.js';
+import { listar, config } from '../db.js';
+import { el, limpar, kpi, dinheiro, numero, percentual, barras, linha, dataCurta, dataBR,
+  vazio, cartao, hoje, diasAtras, erro, sucesso, anexar } from '../ui.js';
+import { pdfTabela, entregarPdf, dinheiroPdf, qtdPdf } from '../documentos.js';
 
 const dia = (iso) => String(iso).slice(0, 10);
 const PERIODOS = [
@@ -10,27 +12,68 @@ const PERIODOS = [
 const DIAS_SEMANA = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 
 export async function render(raiz) {
-  const [vendas, despesas] = await Promise.all([listar('vendas'), listar('despesas')]);
+  const [vendas, despesas, loja] = await Promise.all([
+    listar('vendas'), listar('despesas'), config('loja', {})
+  ]);
   const validas = vendas.filter(v => !v.cancelada);
-  let dias = 29;
+
+  /* O período é sempre um intervalo de datas; os atalhos só preenchem os
+     campos, para que o filtro livre e os botões não briguem entre si. */
+  let de = diasAtras(29), ate = hoje();
 
   const corpo = el('div');
-  const chips = el('div', { class: 'chips' }, PERIODOS.map((p, i) =>
-    el('button', {
-      class: `chip ${p.dias === dias ? 'ativo' : ''}`, type: 'button',
-      onclick: (e) => {
-        dias = p.dias;
-        [...chips.children].forEach(c => c.classList.toggle('ativo', c === e.currentTarget));
-        desenhar();
-      }
-    }, p.rotulo)));
+  const entradaDe = el('input', { type: 'date', value: de });
+  const entradaAte = el('input', { type: 'date', value: ate });
+  const chips = el('div', { class: 'chips' });
+  let ultimo = null;   // dados do período, para exportar em PDF
 
-  raiz.append(chips, corpo);
+  function aplicar() {
+    de = entradaDe.value || diasAtras(29);
+    ate = entradaAte.value || hoje();
+    if (de > ate) { const t = de; de = ate; ate = t; entradaDe.value = de; entradaAte.value = ate; }
+    desenhar();
+  }
+  entradaDe.addEventListener('change', () => { marcarChip(null); aplicar(); });
+  entradaAte.addEventListener('change', () => { marcarChip(null); aplicar(); });
+
+  function marcarChip(alvo) {
+    [...chips.children].forEach(c => c.classList.toggle('ativo', c === alvo));
+  }
+
+  for (const p of PERIODOS) {
+    const b = el('button', { class: 'chip', type: 'button' }, p.rotulo);
+    b.onclick = () => {
+      entradaDe.value = diasAtras(p.dias); entradaAte.value = hoje();
+      marcarChip(b); aplicar();
+    };
+    if (p.dias === 29) b.classList.add('ativo');
+    chips.appendChild(b);
+  }
+  const btnMes = el('button', { class: 'chip', type: 'button' }, 'Mês atual');
+  btnMes.onclick = () => {
+    const agora = new Date();
+    entradaDe.value = new Date(agora.getFullYear(), agora.getMonth(), 1).toISOString().slice(0, 10);
+    entradaAte.value = hoje();
+    marcarChip(btnMes); aplicar();
+  };
+  chips.appendChild(btnMes);
+
+  anexar(raiz,
+    chips,
+    el('div', { class: 'linha mb mt' }, [
+      el('div', { class: 'campo', style: { margin: 0 } }, [el('label', { text: 'De' }), entradaDe]),
+      el('div', { class: 'campo', style: { margin: 0 } }, [el('label', { text: 'Até' }), entradaAte])
+    ]),
+    el('button', { class: 'btn btn-vazio btn-bloco mb', type: 'button', onclick: () => exportarPdf() },
+      '📄 Exportar resultado em PDF'),
+    corpo
+  );
 
   function desenhar() {
-    const inicio = dia(new Date(Date.now() - dias * 864e5).toISOString());
-    const noPeriodo = validas.filter(v => dia(v.data) >= inicio);
-    const despesasPeriodo = despesas.filter(d => dia(d.data) >= inicio);
+    const inicio = de;
+    const dias = Math.max(0, Math.round((new Date(ate) - new Date(de)) / 864e5));
+    const noPeriodo = validas.filter(v => dia(v.data) >= de && dia(v.data) <= ate);
+    const despesasPeriodo = despesas.filter(d => dia(d.data) >= de && dia(d.data) <= ate);
 
     const faturamento = noPeriodo.reduce((a, v) => a + v.total, 0);
     const lucro = noPeriodo.reduce((a, v) => a + (v.lucro || 0), 0);
@@ -39,7 +82,7 @@ export async function render(raiz) {
     const ticket = noPeriodo.length ? faturamento / noPeriodo.length : 0;
 
     // período anterior de mesmo tamanho, para comparar
-    const inicioAnterior = dia(new Date(Date.now() - (dias * 2 + 1) * 864e5).toISOString());
+    const inicioAnterior = dia(new Date(new Date(de).getTime() - (dias + 1) * 864e5).toISOString());
     const anterior = validas.filter(v => dia(v.data) >= inicioAnterior && dia(v.data) < inicio);
     const faturamentoAnterior = anterior.reduce((a, v) => a + v.total, 0);
     const variacao = faturamentoAnterior ? (faturamento - faturamentoAnterior) / faturamentoAnterior * 100 : null;
@@ -66,12 +109,15 @@ export async function render(raiz) {
     }
     const melhorDia = Object.entries(porDia).sort((a, b) => b[1] - a[1])[0];
 
-    // série diária
+    // série diária (no máximo 30 colunas, senão o gráfico vira sopa)
     const serie = [];
+    const fim = new Date(ate).getTime();
     for (let i = Math.min(dias, 29); i >= 0; i--) {
-      const d = dia(new Date(Date.now() - i * 864e5).toISOString());
+      const d = dia(new Date(fim - i * 864e5).toISOString());
       serie.push({ rotulo: dataCurta(d), valor: validas.filter(v => dia(v.data) === d).reduce((a, v) => a + v.total, 0) });
     }
+
+    ultimo = { de, ate, noPeriodo, faturamento, lucro, custoTotal, totalDespesas, ticket, ranking, porPagamento };
 
 anexar(limpar(corpo), 
       el('div', { class: 'grade2 mb' }, [
@@ -106,8 +152,43 @@ anexar(limpar(corpo),
         : null,
 
       el('div', { class: 'aviso aviso-verde' },
-        `Custo da mercadoria vendida: ${dinheiro(custoTotal)} · despesas: ${dinheiro(totalDespesas)}.`)
+        `Custo da mercadoria vendida: ${dinheiro(custoTotal)} · despesas: ${dinheiro(totalDespesas)}.`),
+
+      el('div', { class: 'pq mudo', text: `Período: ${dataBR(de)} a ${dataBR(ate)}.` })
     );
+  }
+
+  async function exportarPdf() {
+    if (!ultimo) { erro('Nada para exportar'); return; }
+    const r = ultimo;
+    try {
+      const bytes = pdfTabela({
+        titulo: 'RESULTADO DO PERÍODO',
+        subtitulo: `${dataBR(r.de)} a ${dataBR(r.ate)}`,
+        loja,
+        colunas: [
+          { titulo: 'PRODUTO', campo: 'nome', peso: 4 },
+          { titulo: 'QTD', campo: 'qtd', peso: 1.2, alinhamento: 'direita' },
+          { titulo: 'FATURAMENTO', campo: 'valor', peso: 2, alinhamento: 'direita' },
+          { titulo: 'LUCRO', campo: 'lucro', peso: 2, alinhamento: 'direita' }
+        ],
+        linhas: r.ranking.map(p => ({
+          nome: p.nome, qtd: qtdPdf(p.qtd), valor: dinheiroPdf(p.valor), lucro: dinheiroPdf(p.lucro)
+        })),
+        resumo: [
+          { rotulo: 'Vendas no período', valor: String(r.noPeriodo.length) },
+          { rotulo: 'Faturamento', valor: dinheiroPdf(r.faturamento) },
+          { rotulo: 'Ticket médio', valor: dinheiroPdf(r.ticket) },
+          { rotulo: 'Custo da mercadoria', valor: dinheiroPdf(r.custoTotal) },
+          { rotulo: 'Lucro bruto', valor: dinheiroPdf(r.lucro) },
+          { rotulo: 'Despesas', valor: dinheiroPdf(r.totalDespesas) },
+          { rotulo: 'RESULTADO DO PERÍODO', valor: dinheiroPdf(r.lucro - r.totalDespesas),
+            cor: r.lucro - r.totalDespesas >= 0 ? [0.11, 0.51, 0.31] : [0.78, 0.16, 0.16] }
+        ],
+        observacao: 'Lucro bruto = faturamento − custo da mercadoria vendida. O resultado desconta ainda as despesas lançadas no período.'
+      });
+      sucesso(await entregarPdf(bytes, `resultado-${r.de}-a-${r.ate}.pdf`));
+    } catch (e) { erro('Não consegui gerar o PDF: ' + e.message); }
   }
 
   desenhar();

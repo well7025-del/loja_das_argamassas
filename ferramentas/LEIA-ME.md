@@ -10,6 +10,20 @@ node ferramentas/importar-csv.mjs Products.csv Customers.csv Sales.csv backup-im
 Depois, no celular: **Mais › Ajustes › ↩️ Restaurar** → escolha o arquivo →
 **Substituir tudo**.
 
+## Só os cadastros, sem as vendas
+
+Com `--cadastros`, o arquivo sai com **clientes, produtos (sem saldo de estoque),
+contas e configuração** — nenhuma venda, nenhum resultado:
+
+```bash
+node ferramentas/importar-csv.mjs Products.csv Customers.csv Sales.csv cadastros.json --cadastros
+```
+
+É o arquivo para **abrir outra loja, montar um segundo celular ou entregar a base a
+alguém sem entregar junto o faturamento**. Quem recebe restaura e lança a entrada do
+estoque real. O mesmo arquivo pode ser gerado pelo próprio celular, em
+**Mais › Ajustes › 📇 Backup só dos cadastros**.
+
 ## Três coisas que o importador faz de propósito
 
 **As vendas antigas não entram no saldo das contas.** O dinheiro daquelas vendas

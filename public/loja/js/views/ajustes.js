@@ -22,9 +22,10 @@ export async function render(raiz) {
   await desenhar();
 
   async function desenhar() {
-    const [loja, status, espaco, intervalo, comFotos, temSenha, vendas, impressora] = await Promise.all([
+    const [loja, status, espaco, intervalo, comFotos, temSenha, vendas, impressora, pix] = await Promise.all([
       config('loja', {}), statusBackup(), espacoUsado(), config('intervaloBackup', 1),
-      config('backupComFotos', true), config('senhaApp'), listar('vendas'), impressoraEscolhida()
+      config('backupComFotos', true), config('senhaApp'), listar('vendas'), impressoraEscolhida(),
+      config('pix', null)
     ]);
 
     anexar(limpar(corpo),
@@ -52,6 +53,9 @@ export async function render(raiz) {
           el('span', { text: 'Incluir as fotos dos comprovantes (arquivo maior)' })
         ]),
 
+        el('button', { class: 'btn btn-vazio btn-bloco mt', onclick: backupCadastros },
+          '📇 Backup só dos cadastros (clientes e produtos)'),
+
         el('div', { class: 'grade2 mt' }, [
           driveDisponivel()
             ? el('button', { class: 'btn btn-vazio', onclick: configurarDrive },
@@ -72,9 +76,20 @@ export async function render(raiz) {
 
       /* ---------- Loja ---------- */
       cartao('🏬 Dados da loja', el('div', { class: 'cartao-corpo' }, [
-        el('div', { class: 'pq mudo mb', text: 'Aparecem no comprovante enviado ao cliente.' }),
+        el('div', { class: 'pq mudo mb', text: 'Aparecem no comprovante, nos relatórios e no catálogo.' }),
         el('button', { class: 'btn btn-vazio btn-bloco', onclick: () => editarLoja(loja) },
-          `${loja.nome || 'Loja Caruaru'}${loja.telefone ? ' · ' + loja.telefone : ''}`)
+          `${loja.nome || 'Loja Caruaru'}${loja.endereco ? ' · ' + loja.endereco : ''}${loja.whatsapp || loja.telefone ? ' · ' + (loja.whatsapp || loja.telefone) : ''}`)
+      ])),
+
+      /* ---------- PIX ---------- */
+      cartao('⚡ Recebimento por PIX', el('div', { class: 'cartao-corpo' }, [
+        pix?.chave
+          ? el('div', { class: 'aviso aviso-verde', style: { margin: '0 0 10px' } },
+              `Chave ${pix.tipo || 'PIX'}: ${pix.chave}${pix.titular ? ' · ' + pix.titular : ''}`)
+          : el('div', { class: 'aviso aviso-amarelo', style: { margin: '0 0 10px' } },
+              'Sem chave cadastrada — o comprovante vai sem os dados para o cliente pagar.'),
+        el('button', { class: `btn btn-bloco ${pix?.chave ? 'btn-vazio' : 'btn-primario'}`, onclick: () => editarPix(pix) },
+          pix?.chave ? 'Alterar dados do PIX' : 'Cadastrar chave PIX')
       ])),
 
       /* ---------- Impressora ---------- */
@@ -146,6 +161,28 @@ export async function render(raiz) {
       await registrarBackupLocal(arquivo.nome);
       sucesso('Arquivo de backup baixado');
       desenhar();
+    }
+  }
+
+  /**
+   * Backup enxuto: leva clientes, produtos (sem saldo de estoque), contas e
+   * configurações. Serve para abrir outra loja ou trocar de celular sem
+   * carregar junto o histórico de vendas.
+   */
+  async function backupCadastros() {
+    let arquivo;
+    try {
+      aviso('Preparando o arquivo de cadastros…');
+      arquivo = await gerarBackup({ incluirFotos: false, somenteCadastros: true });
+    } catch (e) { erro(`Não consegui montar o arquivo: ${e.message}`); return; }
+
+    try {
+      await compartilharArquivo(arquivo);
+      sucesso(`Cadastros exportados — ${numero(arquivo.registros)} registro(s), ${tamanho(arquivo.tamanho)}`);
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      baixarArquivo(arquivo);
+      sucesso(`Arquivo ${arquivo.nome} baixado`);
     }
   }
 
@@ -332,18 +369,73 @@ export async function render(raiz) {
   }
 
   /* ---------------- Loja, senha e limpeza ---------------- */
+  /* ---------------- Dados de recebimento por PIX ---------------- */
+  function editarPix(pix) {
+    const tipo = el('select', {}, ['Celular', 'CPF', 'CNPJ', 'E-mail', 'Chave aleatória']
+      .map(t => el('option', { value: t, selected: (pix?.tipo || 'Celular') === t, text: t })));
+    const chave = el('input', { type: 'text', value: pix?.chave || '', placeholder: 'A chave que o cliente vai copiar' });
+    const titular = el('input', { type: 'text', value: pix?.titular || '', placeholder: 'Nome de quem recebe' });
+    const banco = el('input', { type: 'text', value: pix?.banco || '', placeholder: 'Ex.: Banco do Brasil' });
+    const sempre = el('input', { type: 'checkbox', checked: Boolean(pix?.sempre) });
+
+    painel({
+      titulo: 'Recebimento por PIX',
+      corpo: el('div', {}, [
+        el('div', { class: 'aviso aviso-azul' },
+          'A chave entra no comprovante da venda, em linha própria, com botão de copiar — o cliente cola direto no aplicativo do banco.'),
+        el('div', { class: 'campo' }, [el('label', { text: 'Tipo da chave' }), tipo]),
+        el('div', { class: 'campo' }, [el('label', { text: 'Chave PIX *' }), chave]),
+        el('div', { class: 'campo' }, [el('label', { text: 'Titular da conta' }), titular]),
+        el('div', { class: 'campo' }, [el('label', { text: 'Banco' }), banco]),
+        el('label', { class: 'check' }, [sempre,
+          el('span', { text: 'Mostrar a chave em todo comprovante (não só nas vendas por PIX)' })])
+      ]),
+      acoes: [
+        pix?.chave ? {
+          rotulo: 'Remover', class: 'btn-perigo', acao: async (fechar) => {
+            await definirConfig('pix', null);
+            sucesso('Dados do PIX removidos'); fechar(); desenhar();
+          }
+        } : null,
+        {
+          rotulo: 'Salvar', class: 'btn-primario', acao: async (fechar) => {
+            if (!chave.value.trim()) { erro('Informe a chave PIX'); return; }
+            await definirConfig('pix', {
+              tipo: tipo.value, chave: chave.value.trim(), titular: titular.value.trim(),
+              banco: banco.value.trim(), sempre: sempre.checked
+            });
+            sucesso('Dados do PIX salvos'); fechar(); desenhar();
+          }
+        }
+      ].filter(Boolean)
+    });
+  }
+
   function editarLoja(loja) {
-    const nome = el('input', { type: 'text', value: loja.nome || '' });
-    const telefone = el('input', { type: 'tel', value: loja.telefone || '' });
+    const nome = el('input', { type: 'text', value: loja.nome || '', placeholder: 'Loja das Argamassas — Caruaru' });
+    const endereco = el('input', { type: 'text', value: loja.endereco || '', placeholder: 'Rua, número, bairro, cidade' });
+    const whatsapp = el('input', { type: 'tel', value: loja.whatsapp || loja.telefone || '', placeholder: '(81) 90000-0000' });
+    const cnpj = el('input', { type: 'text', value: loja.cnpj || '', placeholder: 'Opcional' });
     painel({
       titulo: 'Dados da loja',
       corpo: el('div', {}, [
+        el('div', { class: 'aviso aviso-azul' },
+          'Aparecem no cabeçalho do comprovante, dos relatórios e do catálogo enviados ao cliente.'),
         el('div', { class: 'campo' }, [el('label', { text: 'Nome' }), nome]),
-        el('div', { class: 'campo' }, [el('label', { text: 'WhatsApp / telefone' }), telefone])
+        el('div', { class: 'campo' }, [el('label', { text: 'Endereço' }), endereco]),
+        el('div', { class: 'campo' }, [el('label', { text: 'WhatsApp' }), whatsapp]),
+        el('div', { class: 'campo' }, [el('label', { text: 'CNPJ' }), cnpj])
       ]),
       acoes: [{
         rotulo: 'Salvar', class: 'btn-primario', acao: async (fechar) => {
-          const dados = { nome: nome.value.trim() || 'Loja Caruaru', telefone: telefone.value.trim() };
+          const dados = {
+            nome: nome.value.trim() || 'Loja das Argamassas — Caruaru',
+            endereco: endereco.value.trim(),
+            whatsapp: whatsapp.value.trim(),
+            // telefone continua preenchido: o cupom impresso e os backups antigos usam esse campo
+            telefone: whatsapp.value.trim(),
+            cnpj: cnpj.value.trim()
+          };
           await definirConfig('loja', dados);
           estado.loja = dados;
           sucesso('Dados salvos'); fechar(); desenhar();

@@ -1,16 +1,16 @@
 /* Venda rápida: toque nos produtos, confira o pedido e finalize. */
-import { listar, obter, salvar, registrarVenda, config } from '../db.js';
+import { listar, obter, salvar, registrarVenda, config, precoComDesconto } from '../db.js';
 import { estado, recalcularPendencias } from '../app.js';
 import {
-  el, limpar, dinheiro, numero, erro, sucesso, painel, vazio, campoFoto,
-  abrirWhatsApp, numeroWhatsApp, telefoneBR, copiar, dataHora, atrasar, $, anexar } from '../ui.js';
+  el, limpar, dinheiro, numero, percentual, erro, sucesso, painel, vazio, campoFoto,
+  abrirWhatsApp, numeroWhatsApp, telefoneBR, copiar, dataHora, atrasar, redesenho, $, anexar } from '../ui.js';
 import { vozDisponivel, criarReconhecedor, interpretarComandoPDV, interpretarCliente } from '../voice.js';
 import { impressoraDisponivel, imprimirCupom } from '../impressora.js';
+import { pdfComprovante, entregarPdf, nomeArquivoSeguro } from '../documentos.js';
 
 const PAGAMENTOS = [
   { id: 'dinheiro', rotulo: '💵 Dinheiro' }, { id: 'pix', rotulo: '⚡ PIX' },
-  { id: 'debito', rotulo: '💳 Débito' }, { id: 'credito', rotulo: '💳 Crédito' },
-  { id: 'prazo', rotulo: '📅 A prazo' }, { id: 'boleto', rotulo: '🧾 Boleto' }
+  { id: 'debito', rotulo: '💳 Débito' }, { id: 'credito', rotulo: '💳 Crédito' }
 ];
 
 export async function render(raiz) {
@@ -105,10 +105,27 @@ export async function render(raiz) {
     atualizar();
   }
 
+  /* Linhas do pedido já com o desconto por quantidade cadastrado no produto. */
+  const linhasPedido = () => [...carrinho.values()].map(i => {
+    const { pct, preco } = precoComDesconto(i.produto, i.qtd);
+    return {
+      produto: i.produto, qtd: i.qtd, precoTabela: i.produto.preco, pct, preco,
+      total: Number((preco * i.qtd).toFixed(2)),
+      economia: Number(((i.produto.preco - preco) * i.qtd).toFixed(2))
+    };
+  });
+
   const totais = () => {
-    const subtotal = [...carrinho.values()].reduce((a, i) => a + i.produto.preco * i.qtd, 0);
+    const linhas = linhasPedido();
+    const bruto = linhas.reduce((a, l) => a + l.precoTabela * l.qtd, 0);
+    const subtotal = linhas.reduce((a, l) => a + l.total, 0);
+    const porQtd = Number((bruto - subtotal).toFixed(2));
     const desc = Math.min(subtotal, Math.max(0, desconto));
-    return { subtotal, desconto: desc, total: subtotal - desc, itens: [...carrinho.values()].reduce((a, i) => a + i.qtd, 0) };
+    return {
+      linhas, bruto, subtotal, porQtd, desconto: desc,
+      total: Number((subtotal - desc).toFixed(2)),
+      itens: linhas.reduce((a, l) => a + l.qtd, 0)
+    };
   };
 
   let redesenharPedido = null;
@@ -168,27 +185,38 @@ export async function render(raiz) {
       if (!carrinho.size) {
         itens.appendChild(vazio('Pedido vazio', '🛒'));
       } else {
-        for (const item of carrinho.values()) {
+        for (const linha of linhasPedido()) {
           const entrada = el('input', {
-            type: 'number', inputmode: 'decimal', min: '0', value: String(item.qtd),
-            onchange: (e) => definirQtd(item.produto.id, Number(e.target.value))
+            type: 'number', inputmode: 'decimal', min: '0', value: String(linha.qtd),
+            onchange: (e) => definirQtd(linha.produto.id, Number(e.target.value))
           });
-          itens.appendChild(el('div', { class: 'item' }, [
+          anexar(itens, el('div', { class: 'item' }, [
             el('div', { class: 'info' }, [
-              el('div', { class: 'titulo', text: item.produto.nome }),
-              el('div', { class: 'sub', text: `${dinheiro(item.produto.preco)} × ${item.qtd} = ${dinheiro(item.produto.preco * item.qtd)}` })
+              el('div', { class: 'titulo', text: linha.produto.nome }),
+              el('div', { class: 'sub', text: `${dinheiro(linha.preco)} × ${numero(linha.qtd)} = ${dinheiro(linha.total)}` }),
+              linha.pct > 0
+                ? el('div', { class: 'pq', style: { color: 'var(--verde)', fontWeight: '600' },
+                    text: `−${percentual(linha.pct)} por quantidade (economia de ${dinheiro(linha.economia)})` })
+                : null
             ]),
             el('div', { class: 'qtd' }, [
-              el('button', { type: 'button', onclick: () => adicionar(item.produto, -1) }, '−'),
+              el('button', { type: 'button', onclick: () => adicionar(linha.produto, -1) }, '−'),
               entrada,
-              el('button', { type: 'button', onclick: () => adicionar(item.produto, 1) }, '+')
+              el('button', { type: 'button', onclick: () => adicionar(linha.produto, 1) }, '+')
             ])
           ]));
         }
       }
       const t = totais();
-      limpar(totalArea).append(
-        el('div', { class: 'total-linha' }, [el('span', { text: 'Subtotal' }), el('span', { text: dinheiro(t.subtotal) })]),
+      anexar(limpar(totalArea),
+        el('div', { class: 'total-linha' }, [el('span', { text: 'Subtotal' }), el('span', { text: dinheiro(t.bruto) })]),
+        t.porQtd > 0
+          ? el('div', { class: 'total-linha', style: { color: 'var(--verde)' } },
+              [el('span', { text: 'Desconto por quantidade' }), el('span', { text: '− ' + dinheiro(t.porQtd) })])
+          : null,
+        t.desconto > 0
+          ? el('div', { class: 'total-linha' }, [el('span', { text: 'Desconto no pedido' }), el('span', { text: '− ' + dinheiro(t.desconto) })])
+          : null,
         el('div', { class: 'total-linha grande' }, [el('span', { text: 'Total' }), el('span', { text: dinheiro(t.total) })])
       );
     }
@@ -215,7 +243,7 @@ export async function render(raiz) {
       aoFechar: () => { redesenharPedido = null; }
     });
 
-    redesenharPedido = () => { desenhar(); desenharCliente(); };
+    redesenharPedido = redesenho(() => { desenhar(); desenharCliente(); });
     desenhar(); desenharCliente(); desenharPagamento();
     return p;
   }
@@ -369,12 +397,14 @@ export async function render(raiz) {
         clienteId: cliente?.id || null,
         clienteNome: cliente?.nome || null,
         clienteTelefone: cliente?.telefone || null,
-        itens: [...carrinho.values()].map(i => ({
-          produtoId: i.produto.id, nome: i.produto.nome, unidade: i.produto.unidade,
-          qtd: i.qtd, preco: i.produto.preco, custo: i.produto.custo || 0,
-          total: Number((i.produto.preco * i.qtd).toFixed(2))
+        itens: t.linhas.map(l => ({
+          produtoId: l.produto.id, nome: l.produto.nome, unidade: l.produto.unidade,
+          qtd: l.qtd, preco: Number(l.preco.toFixed(2)), precoTabela: l.precoTabela,
+          descontoQtd: l.pct, custo: l.produto.custo || 0,
+          total: l.total
         })),
         subtotal: Number(t.subtotal.toFixed(2)),
+        descontoQuantidade: t.porQtd,
         desconto: Number(t.desconto.toFixed(2)),
         total: Number(t.total.toFixed(2)),
         pagamento, observacao: observacao || '',
@@ -399,45 +429,78 @@ export async function render(raiz) {
     }
   }
 
-  function textoRecibo(venda) {
-    const loja = estado.loja || {};
-    return [
+  function textoRecibo(venda, loja, pix) {
+    const linhas = [
       `*${loja.nome || 'Loja das Argamassas — Caruaru'}*`,
-      loja.telefone || null, '',
+      loja.endereco || null,
+      loja.whatsapp || loja.telefone || null, '',
       `*Comprovante de venda ${venda.codigo}*`,
       `Data: ${dataHora(venda.data)}`,
       venda.clienteNome ? `Cliente: ${venda.clienteNome}` : null, '',
-      ...venda.itens.map(i => `• ${numero(i.qtd)}x ${i.nome} — ${dinheiro(i.total)}`), '',
-      venda.desconto > 0 ? `Subtotal: ${dinheiro(venda.subtotal)}` : null,
-      venda.desconto > 0 ? `Desconto: -${dinheiro(venda.desconto)}` : null,
+      ...venda.itens.map(i => `• ${numero(i.qtd)}x ${i.nome} — ${dinheiro(i.total)}`
+        + (i.descontoQtd ? ` (−${percentual(i.descontoQtd)})` : '')), '',
+      venda.descontoQuantidade > 0 ? `Desconto por quantidade: -${dinheiro(venda.descontoQuantidade)}` : null,
+      venda.desconto > 0 ? `Desconto no pedido: -${dinheiro(venda.desconto)}` : null,
       `*Total: ${dinheiro(venda.total)}*`,
       `Pagamento: ${venda.pagamento.toUpperCase()}`,
-      venda.observacao ? `Obs.: ${venda.observacao}` : null, '',
-      'Obrigado pela preferência!'
-    ].filter(l => l !== null).join('\n');
+      venda.observacao ? `Obs.: ${venda.observacao}` : null
+    ];
+    if (pix?.chave) {
+      linhas.push('', '*Pagamento via PIX*', `Chave (${pix.tipo || 'PIX'}):`, pix.chave);
+      if (pix.titular) linhas.push(`Titular: ${pix.titular}`);
+      if (pix.banco) linhas.push(`Banco: ${pix.banco}`);
+    }
+    linhas.push('', 'Obrigado pela preferência!');
+    return linhas.filter(l => l !== null).join('\n');
   }
 
-  function mostrarRecibo(venda, comprovante) {
-    const texto = textoRecibo(venda);
+  async function mostrarRecibo(venda, comprovante) {
+    const loja = await config('loja', estado.loja || {});
+    const pixConfig = await config('pix', null);
+    // a chave PIX só entra no comprovante quando o recebimento é por PIX
+    const pix = (pixConfig?.chave && (venda.pagamento === 'pix' || pixConfig.sempre)) ? pixConfig : null;
+    const texto = textoRecibo(venda, loja, pix);
     const numeroZap = numeroWhatsApp(venda.clienteTelefone);
+    const arquivo = `comprovante-${nomeArquivoSeguro(venda.codigo)}.pdf`;
+
+    const corpo = el('div', {}, [
+      el('div', { class: 'aviso aviso-verde' },
+        `✅ ${dinheiro(venda.total)} — ${venda.pagamento.toUpperCase()}${comprovante ? ' · comprovante anexado' : ''}`),
+      el('pre', {
+        style: { whiteSpace: 'pre-wrap', font: 'inherit', fontSize: '13.5px', background: 'var(--cinza-100)', padding: '13px', borderRadius: '11px', margin: '0' },
+        text: texto
+      })
+    ]);
+
+    if (pix) {
+      anexar(corpo, el('div', { class: 'cartao mt' }, el('div', { class: 'cartao-corpo' }, [
+        el('div', { class: 'pq negrito', text: `Chave PIX (${pix.tipo || 'PIX'})` }),
+        el('div', { class: 'chave-pix', style: { wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace', fontSize: '14px', margin: '6px 0 10px' }, text: pix.chave }),
+        el('button', { class: 'btn btn-acao btn-bloco', type: 'button', onclick: () => copiar(pix.chave) }, '📋 Copiar chave PIX')
+      ])));
+    }
+    if (!numeroZap) {
+      anexar(corpo, el('div', { class: 'aviso aviso-amarelo mt' },
+        'Sem WhatsApp cadastrado — ao enviar, você escolhe o contato no próprio aplicativo.'));
+    }
+
+    async function gerarPdf(compartilhar) {
+      try {
+        const bytes = pdfComprovante(venda, loja, pix);
+        sucesso(await entregarPdf(bytes, arquivo, { compartilhar }));
+      } catch (e) { erro('Não consegui gerar o PDF: ' + e.message); }
+    }
+
     painel({
       titulo: `Venda ${venda.codigo}`,
-      corpo: el('div', {}, [
-        el('div', { class: 'aviso aviso-verde' },
-          `✅ ${dinheiro(venda.total)} — ${venda.pagamento.toUpperCase()}${comprovante ? ' · comprovante anexado' : ''}`),
-        el('pre', {
-          style: { whiteSpace: 'pre-wrap', font: 'inherit', fontSize: '13.5px', background: 'var(--cinza-100)', padding: '13px', borderRadius: '11px', margin: '0' },
-          text: texto
-        }),
-        !numeroZap ? el('div', { class: 'aviso aviso-amarelo mt' },
-          'Sem WhatsApp cadastrado — ao enviar, você escolhe o contato no próprio aplicativo.') : null
-      ]),
+      corpo,
       acoes: [
         impressoraDisponivel()
           ? { rotulo: '🖨️ Imprimir', acao: async () => {
               try { sucesso(await imprimirCupom(venda)); } catch (e) { erro(e.message); }
             } }
           : { rotulo: '📋 Copiar', acao: () => copiar(texto) },
+        { rotulo: '📄 PDF', acao: () => gerarPdf(true) },
         { rotulo: '💬 WhatsApp', class: 'btn-ok', acao: () => abrirWhatsApp(numeroZap, texto) }
       ]
     });

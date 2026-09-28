@@ -20,6 +20,10 @@ const ROTAS = {
   clientes:  { titulo: 'Clientes',      carregar: () => import('./views/clientes.js') },
   despesas:  { titulo: 'Despesas',      carregar: () => import('./views/despesas.js') },
   relatorio: { titulo: 'Resultado',     carregar: () => import('./views/relatorio.js') },
+  inventario:  { titulo: 'Inventário',    carregar: () => import('./views/inventario.js') },
+  auditoria:   { titulo: 'Auditoria',     carregar: () => import('./views/auditoria.js') },
+  conciliacao: { titulo: 'Conferência do extrato', carregar: () => import('./views/conciliacao.js') },
+  comissoes:   { titulo: 'Comissões',     carregar: () => import('./views/comissoes.js') },
   ajustes:   { titulo: 'Ajustes',       carregar: () => import('./views/ajustes.js') }
 };
 const ABAS = ['inicio', 'pdv', 'estoque', 'contas', 'mais'];

@@ -1,6 +1,6 @@
 /* Despesas da loja. Quando paga em dinheiro, sai do caixa automaticamente. */
-import { listar, remover, registrarDespesa, lancar, saldos } from '../db.js';
-import { el, limpar, dinheiro, dataBR, erro, sucesso, painel, vazio, barras, confirmar, hoje, numero, anexar } from '../ui.js';
+import { listar, remover, registrarDespesa, lancar, saldos, anexarDocumento, documentosDe } from '../db.js';
+import { el, limpar, dinheiro, dataBR, erro, sucesso, painel, vazio, barras, confirmar, hoje, numero, campoFoto, anexar } from '../ui.js';
 
 const CATEGORIAS = ['aluguel', 'salario', 'comissao', 'energia', 'agua', 'internet', 'impostos',
   'telefone', 'frete', 'combustivel', 'manutencao', 'fornecedor', 'marketing', 'outros'];
@@ -59,7 +59,7 @@ anexar(limpar(corpo),
         ? el('div', { class: 'cartao' }, el('div', { class: 'lista' }, lista.map(d =>
             el('button', { class: 'item', onclick: () => abrir(d) }, [
               el('div', { class: 'info' }, [
-                el('div', { class: 'titulo', text: NOMES[d.categoria] || d.categoria }),
+                el('div', { class: 'titulo', text: (NOMES[d.categoria] || d.categoria) + (d.temDocumento ? ' 📎' : '') }),
                 el('div', { class: 'sub', text: [dataBR(d.data), d.contaNome, d.descricao].filter(Boolean).join(' · ') })
               ]),
               el('span', { class: 'valor', text: dinheiro(d.valor) })
@@ -68,7 +68,8 @@ anexar(limpar(corpo),
     );
   }
 
-  function abrir(despesa) {
+  async function abrir(despesa) {
+    const docs = await documentosDe('despesa', despesa.id);
     painel({
       titulo: NOMES[despesa.categoria] || despesa.categoria,
       corpo: el('div', {}, [
@@ -76,7 +77,13 @@ anexar(limpar(corpo),
           el('div', { class: 'rot', text: 'Valor' }), el('div', { class: 'val', text: dinheiro(despesa.valor) })
         ]),
         el('div', { class: 'pq mudo', text: `${dataBR(despesa.data)}${despesa.contaNome ? ' · pago por ' + despesa.contaNome : ''}` }),
-        despesa.descricao ? el('p', { text: despesa.descricao }) : null
+        despesa.descricao ? el('p', { text: despesa.descricao }) : null,
+        docs.length
+          ? el('div', { class: 'mt' }, [
+              el('div', { class: 'pq negrito mb', text: `Documento(s) anexado(s) — ${docs.length}` }),
+              ...docs.map(d => el('img', { src: d.imagem, class: 'previa', style: { marginBottom: '8px' } }))
+            ])
+          : el('div', { class: 'pq mudo mt', text: 'Sem documento anexado.' })
       ]),
       acoes: [{
         rotulo: 'Excluir', class: 'btn-perigo', acao: async (fechar) => {
@@ -104,6 +111,7 @@ anexar(limpar(corpo),
       el('option', { value: '', text: 'Não lançar em conta (só registrar)' })
     ]);
     const data = el('input', { type: 'date', value: hoje() });
+    const doc = campoFoto({ rotulo: 'Nota fiscal / recibo (opcional)' });
 
     painel({
       titulo: 'Lançar despesa',
@@ -117,7 +125,8 @@ anexar(limpar(corpo),
           el('label', {}, ['Pago por qual conta ', el('span', { class: 'dica', text: '— o saldo dela é debitado' })]),
           conta
         ]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao])
+        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao]),
+        doc.elemento
       ]),
       acoes: [{
         rotulo: 'Lançar', class: 'btn-primario', acao: async (fechar) => {
@@ -127,11 +136,17 @@ anexar(limpar(corpo),
           const escolhida = contas.find(c => c.id === contaId);
           if (escolhida && escolhida.saldo < v && !await confirmar(
             `${escolhida.nome} tem ${dinheiro(escolhida.saldo)}. Lançar mesmo assim deixa o saldo negativo.`)) return;
-          await registrarDespesa({
+          const despesaId = await registrarDespesa({
             data: new Date(`${data.value}T12:00:00`).toISOString(),
             categoria: categoria.value, valor: v,
             descricao: descricao.value.trim(),
-            contaId, contaNome: escolhida?.nome || null
+            contaId, contaNome: escolhida?.nome || null,
+            temDocumento: Boolean(doc.valor())
+          });
+          await anexarDocumento({
+            refTipo: 'despesa', refId: despesaId,
+            nome: `Despesa ${NOMES[categoria.value] || categoria.value}`,
+            imagem: doc.valor(), observacao: descricao.value.trim()
           });
           sucesso('Despesa lançada');
           fechar(); desenhar();

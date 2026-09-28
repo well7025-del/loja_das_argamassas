@@ -4,6 +4,10 @@
  *
  *   node ferramentas/importar-csv.mjs Products.csv Customers.csv Sales.csv saida.json
  *
+ * Com --cadastros, gera o arquivo enxuto: só clientes e produtos (sem saldo de
+ * estoque), contas e configuração — nenhuma venda, nenhum resultado. É o que se
+ * usa para começar outra loja ou outro celular do zero.
+ *
  * Decisões que valem saber:
  *
  * - As vendas antigas entram SEM lançar nas contas. O dinheiro daquelas vendas
@@ -223,9 +227,12 @@ export function converter(caminhoProdutos, caminhoClientes, caminhoVendas) {
 
 /* ---------------- Linha de comando ---------------- */
 
-const [, , fProdutos, fClientes, fVendas, fSaida = 'backup-importado.json'] = process.argv;
+const argumentos = process.argv.slice(2);
+const soCadastros = argumentos.includes('--cadastros');
+const [fProdutos, fClientes, fVendas, fSaida] = argumentos.filter(a => a !== '--cadastros');
+const saida = fSaida || (soCadastros ? 'cadastros-importados.json' : 'backup-importado.json');
 if (!fProdutos || !fClientes || !fVendas) {
-  console.error('uso: node ferramentas/importar-csv.mjs Products.csv Customers.csv Sales.csv [saida.json]');
+  console.error('uso: node ferramentas/importar-csv.mjs Products.csv Customers.csv Sales.csv [saida.json] [--cadastros]');
   process.exit(1);
 }
 
@@ -237,39 +244,60 @@ const CONTAS = [
   { id: 3, chave: 'cartoes', nome: 'Conta Cartões', tipo: 'banco',    recebe: ['debito', 'credito'], ordem: 3, saldoInicial: 0, ativa: true }
 ];
 
+const CONFIG = [
+  { chave: 'configurado', valor: true },
+  { chave: 'loja', valor: { nome: 'Loja das Argamassas — Caruaru', endereco: '', whatsapp: '', telefone: '' } },
+  { chave: 'intervaloBackup', valor: 1 }
+];
+
+/* O arquivo de cadastros vai sem estoque de propósito: quem recebe conta o que
+   tem e lança a entrada, senão começa com um saldo que nunca existiu ali. */
+const dados = soCadastros
+  ? {
+      produtos: produtos.map(p => ({ ...p, estoque: 0, movimentos: [] })),
+      clientes,
+      contas: CONTAS.map(c => ({ ...c, saldoInicial: 0 })),
+      config: CONFIG
+    }
+  : {
+      produtos, clientes, vendas,
+      despesas: [], contas: CONTAS, lancamentos: [], comprovantes: [],
+      documentos: [], ajustes: [], inventarios: [], extratos: [],
+      config: [...CONFIG, { chave: 'contadorVendas', valor: 0 }]
+    };
+
 const backup = {
   aplicativo: 'Loja das Argamassas — Caruaru',
-  versao: 2,
+  versao: 3,
   geradoEm: new Date().toISOString(),
   incluiFotos: false,
+  tipo: soCadastros ? 'cadastros' : 'completo',
   origem: 'importação do sistema anterior',
-  dados: {
-    produtos, clientes, vendas,
-    despesas: [], contas: CONTAS, lancamentos: [], comprovantes: [],
-    config: [
-      { chave: 'configurado', valor: true },
-      { chave: 'loja', valor: { nome: 'Loja das Argamassas — Caruaru', telefone: '' } },
-      { chave: 'intervaloBackup', valor: 1 },
-      { chave: 'contadorVendas', valor: 0 }
-    ]
-  }
+  dados
 };
 
-writeFileSync(fSaida, JSON.stringify(backup));
+writeFileSync(saida, JSON.stringify(backup));
 
 const faturamento = vendas.reduce((a, v) => a + v.total, 0);
 const lucro = vendas.reduce((a, v) => a + v.lucro, 0);
 const porPagamento = vendas.reduce((m, v) => (m[v.pagamento] = (m[v.pagamento] || 0) + v.total, m), {});
 const brl = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-console.log(`\nArquivo gerado: ${fSaida}\n`);
+console.log(`\nArquivo gerado: ${saida}\n`);
 console.log(`  ${produtos.length} produtos`);
 console.log(`  ${clientes.length} clientes`);
-console.log(`  ${vendas.length} vendas · ${brl(faturamento)} faturados · ${brl(lucro)} de lucro`);
-console.log('\n  por forma de pagamento:');
-for (const [forma, valor] of Object.entries(porPagamento).sort((a, b) => b[1] - a[1])) {
-  console.log(`    ${forma.padEnd(10)} ${brl(valor).padStart(14)}  (${(valor / faturamento * 100).toFixed(1)}%)`);
+
+if (soCadastros) {
+  if (avisos.length) { console.log('\n  avisos:'); for (const a of avisos) console.log('    - ' + a); }
+  console.log('\n  Arquivo só de cadastros: sem vendas, sem saldo de estoque e sem saldo de conta.');
+  console.log('  Restaure em Mais › Ajustes › Restaurar e depois lance a entrada do estoque real.\n');
+} else {
+  console.log(`  ${vendas.length} vendas · ${brl(faturamento)} faturados · ${brl(lucro)} de lucro`);
+  console.log('\n  por forma de pagamento:');
+  for (const [forma, valor] of Object.entries(porPagamento).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${forma.padEnd(10)} ${brl(valor).padStart(14)}  (${(valor / faturamento * 100).toFixed(1)}%)`);
+  }
+  if (avisos.length) { console.log('\n  avisos:'); for (const a of avisos) console.log('    - ' + a); }
+  console.log('\n  As vendas antigas NÃO entram no saldo das contas — informe o saldo real de');
+  console.log('  cada conta em Contas › tocar na conta › Editar conta › Saldo inicial.\n');
 }
-if (avisos.length) { console.log('\n  avisos:'); for (const a of avisos) console.log('    - ' + a); }
-console.log('\n  As vendas antigas NÃO entram no saldo das contas — informe o saldo real de');
-console.log('  cada conta em Contas › tocar na conta › Editar conta › Saldo inicial.\n');

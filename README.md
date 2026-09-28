@@ -83,15 +83,21 @@ Google Drive**.
 Abra em `https://SEU-ENDERECO/loja/` — ou publique a pasta `public/loja/` sozinha em
 qualquer hospedagem estática, pois não depende do servidor.
 
-Tem PDV com voz e comprovante, estoque com **custo médio real**, **contas
-separadas para dinheiro, PIX e cartões** (com transferências, receitas e
-despesas), **impressão do cupom em impressora térmica Bluetooth**, clientes,
-despesas e resultado. Não tem fábrica, multi-loja, usuários, mapa, catálogo nem
-campanhas — isso é do sistema completo. Guia passo a passo:
+Tem PDV com voz, **desconto automático por quantidade** e comprovante em texto ou
+**PDF com a chave PIX copiável**; estoque com **custo médio real**, foto do produto,
+comissão por produto e **ajustes extraordinários com documento de autorização**;
+**contas separadas para dinheiro, PIX e cartões** (transferências, receitas e
+despesas, todas com anexo); **conferência do extrato bancário e da maquininha**
+(OFX/CSV, com pré-lançamento para aprovação); **inventário cego** e **relatórios de
+auditoria em PDF**; **impressão do cupom em impressora térmica Bluetooth**; clientes,
+despesas e resultado por período. Não tem fábrica, multi-loja, usuários, mapa,
+catálogo publicado, campanhas nem venda a prazo/boleto — isso é do sistema completo
+ou fica de fora de propósito. Guia passo a passo:
 **[deploy/COMO-USAR-O-APP-DA-LOJA.md](deploy/COMO-USAR-O-APP-DA-LOJA.md)**.
 
 Para trazer clientes, produtos e histórico de vendas de outro sistema, há um
-importador de CSV em **[ferramentas/](ferramentas/LEIA-ME.md)**.
+importador de CSV em **[ferramentas/](ferramentas/LEIA-ME.md)** — que também gera,
+com `--cadastros`, um arquivo só de clientes e produtos, sem resultados de vendas.
 
 ### Instalador para Android (.apk)
 

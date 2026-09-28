@@ -3,9 +3,10 @@
    Cada venda cai na conta da sua forma de pagamento; aqui ficam as
    transferências entre contas e os lançamentos avulsos de receita e despesa.
    ============================================================ */
-import { listar, salvar, saldos, contasAtivas, lancar, transferir, remover } from '../db.js';
+import { listar, salvar, saldos, contasAtivas, lancar, transferir, remover,
+  anexarDocumento, documentosDe } from '../db.js';
 import {
-  el, limpar, dinheiro, dataHora, erro, sucesso, painel, vazio, confirmar, numero, anexar
+  el, limpar, dinheiro, dataHora, erro, sucesso, painel, vazio, confirmar, numero, campoFoto, anexar
 } from '../ui.js';
 
 const ICONES = { dinheiro: '💵', banco: '🏦', cartao: '💳', outro: '📁' };
@@ -17,8 +18,7 @@ const ROTULOS = {
 
 const FORMAS_PAGAMENTO = [
   { id: 'dinheiro', rotulo: 'Dinheiro' }, { id: 'pix', rotulo: 'PIX' },
-  { id: 'debito', rotulo: 'Cartão de débito' }, { id: 'credito', rotulo: 'Cartão de crédito' },
-  { id: 'boleto', rotulo: 'Boleto' }, { id: 'prazo', rotulo: 'A prazo' }
+  { id: 'debito', rotulo: 'Cartão de débito' }, { id: 'credito', rotulo: 'Cartão de crédito' }
 ];
 
 export async function render(raiz) {
@@ -82,9 +82,12 @@ export async function render(raiz) {
 
   function linhaLancamento(l, contas) {
     const conta = contas.find(c => c.id === l.contaId);
-    return el('div', { class: 'item' }, [
+    return el(l.temDocumento ? 'button' : 'div', {
+      class: 'item',
+      onclick: l.temDocumento ? () => verDocumentos(l) : null
+    }, [
       el('div', { class: 'info' }, [
-        el('div', { class: 'titulo', text: ROTULOS[l.tipo] || l.tipo }),
+        el('div', { class: 'titulo', text: (ROTULOS[l.tipo] || l.tipo) + (l.temDocumento ? ' 📎' : '') }),
         el('div', { class: 'sub', text: `${dataHora(l.data)} · ${conta?.nome || 'conta removida'}${l.descricao ? ' · ' + l.descricao : ''}` })
       ]),
       el('span', {
@@ -92,6 +95,26 @@ export async function render(raiz) {
         text: `${l.valor >= 0 ? '+' : '−'} ${dinheiro(Math.abs(l.valor))}`
       })
     ]);
+  }
+
+  /* ---------------- Documentos anexados ---------------- */
+  async function verDocumentos(lancamento) {
+    const chave = lancamento.transferencia
+      ? ['transferencia', lancamento.transferencia]
+      : ['lancamento', lancamento.id];
+    const docs = await documentosDe(chave[0], chave[1]);
+    painel({
+      titulo: 'Documento do lançamento',
+      corpo: el('div', {}, [
+        el('div', { class: 'pq mudo mb', text: `${dataHora(lancamento.data)} · ${lancamento.descricao || ''}` }),
+        docs.length
+          ? el('div', {}, docs.map(d => el('div', { class: 'mb' }, [
+              el('div', { class: 'pq negrito', text: d.nome }),
+              el('img', { src: d.imagem, class: 'previa' })
+            ])))
+          : vazio('Nenhum documento guardado', '📄')
+      ])
+    });
   }
 
   /* ---------------- Extrato de uma conta ---------------- */
@@ -135,6 +158,7 @@ export async function render(raiz) {
       el('option', { value: c.id, selected: origemPadrao ? c.id !== origemPadrao : i === 1, text: c.nome })));
     const valor = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0,00' });
     const descricao = el('input', { type: 'text', placeholder: 'Ex.: depósito do caixa no banco' });
+    const doc = campoFoto({ rotulo: 'Comprovante do depósito (opcional)' });
 
     painel({
       titulo: 'Transferir entre contas',
@@ -144,7 +168,8 @@ export async function render(raiz) {
         el('div', { class: 'campo' }, [el('label', { text: 'De' }), origem]),
         el('div', { class: 'campo' }, [el('label', { text: 'Para' }), destino]),
         el('div', { class: 'campo' }, [el('label', { text: 'Valor (R$)' }), valor]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao])
+        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao]),
+        doc.elemento
       ]),
       acoes: [{
         rotulo: 'Transferir', class: 'btn-primario', acao: async (fechar) => {
@@ -156,7 +181,14 @@ export async function render(raiz) {
           if (saldoOrigem < v && !await confirmar(
             `A conta de origem tem ${dinheiro(saldoOrigem)}. Transferir mesmo assim deixa o saldo negativo.`)) return;
           try {
-            await transferir({ origemId, destinoId, valor: v, descricao: descricao.value.trim() });
+            const marca = await transferir({
+              origemId, destinoId, valor: v, descricao: descricao.value.trim(),
+              documento: Boolean(doc.valor())
+            });
+            await anexarDocumento({
+              refTipo: 'transferencia', refId: marca, nome: 'Comprovante de transferência',
+              imagem: doc.valor(), observacao: descricao.value.trim()
+            });
             sucesso('Transferência registrada');
             fechar(); desenhar();
           } catch (e) { erro(e.message); }
@@ -171,6 +203,7 @@ export async function render(raiz) {
     const conta = el('select', {}, contas.map(c => el('option', { value: c.id, text: `${c.nome} — ${dinheiro(c.saldo)}` })));
     const valor = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', placeholder: '0,00' });
     const descricao = el('input', { type: 'text', placeholder: tipo === 'receita' ? 'Ex.: aluguel de andaime' : 'Ex.: material de limpeza' });
+    const doc = campoFoto({ rotulo: 'Documento comprobatório (opcional)' });
 
     painel({
       titulo: tipo === 'receita' ? 'Lançar receita' : 'Lançar despesa',
@@ -180,16 +213,23 @@ export async function render(raiz) {
           : 'Saída de dinheiro de qualquer conta. Para despesas do mês (aluguel, energia…), use o menu Despesas.'),
         el('div', { class: 'campo' }, [el('label', { text: 'Conta' }), conta]),
         el('div', { class: 'campo' }, [el('label', { text: 'Valor (R$)' }), valor]),
-        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao])
+        el('div', { class: 'campo' }, [el('label', { text: 'Descrição' }), descricao]),
+        doc.elemento
       ]),
       acoes: [{
         rotulo: 'Lançar', class: tipo === 'receita' ? 'btn-ok' : 'btn-primario', acao: async (fechar) => {
           const v = Number(valor.value);
           if (!(v > 0)) { erro('Informe um valor maior que zero'); return; }
-          await lancar({
+          const lancamentoId = await lancar({
             contaId: Number(conta.value), tipo,
             valor: tipo === 'receita' ? v : -v,
-            descricao: descricao.value.trim()
+            descricao: descricao.value.trim(),
+            documento: Boolean(doc.valor())
+          });
+          await anexarDocumento({
+            refTipo: 'lancamento', refId: lancamentoId,
+            nome: tipo === 'receita' ? 'Comprovante de receita' : 'Comprovante de despesa',
+            imagem: doc.valor(), observacao: descricao.value.trim()
           });
           sucesso(tipo === 'receita' ? 'Receita lançada' : 'Despesa lançada');
           fechar(); desenhar();

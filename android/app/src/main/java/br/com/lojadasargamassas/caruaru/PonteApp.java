@@ -4,6 +4,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.net.Uri;
+import android.util.Base64;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
@@ -57,13 +58,33 @@ public class PonteApp {
      */
     @JavascriptInterface
     public String salvarBackup(String nome, String conteudo, boolean compartilhar) {
-        if (nome == null || nome.isEmpty()) nome = "backup-loja-caruaru.json";
-        if (conteudo == null) return "erro:sem conteúdo";
+        return gravar(nome == null || nome.isEmpty() ? "backup-loja-caruaru.json" : nome,
+                conteudo == null ? null : conteudo.getBytes(StandardCharsets.UTF_8),
+                "application/json", compartilhar);
+    }
 
-        byte[] bytes = conteudo.getBytes(StandardCharsets.UTF_8);
+    /**
+     * Grava um arquivo binario (PDF do comprovante, relatorio) vindo em base64
+     * e abre o compartilhamento — e assim o cupom sai pelo WhatsApp do cliente.
+     */
+    @JavascriptInterface
+    public String salvarArquivo(String nome, String base64, String tipo, boolean compartilhar) {
+        if (nome == null || nome.isEmpty()) return "erro:sem nome de arquivo";
+        if (base64 == null) return "erro:sem conteúdo";
+        byte[] bytes;
+        try {
+            bytes = Base64.decode(base64, Base64.DEFAULT);
+        } catch (IllegalArgumentException e) {
+            return "erro:arquivo inválido";
+        }
+        return gravar(nome, bytes, tipo == null || tipo.isEmpty() ? "application/octet-stream" : tipo, compartilhar);
+    }
+
+    private String gravar(String nome, byte[] bytes, String tipo, boolean compartilhar) {
+        if (bytes == null) return "erro:sem conteúdo";
         String ondeSalvou;
         try {
-            ondeSalvou = gravarEmDownloads(nome, bytes);
+            ondeSalvou = gravarEmDownloads(nome, bytes, tipo);
         } catch (Exception e) {
             ondeSalvou = null;
         }
@@ -72,7 +93,8 @@ public class PonteApp {
             try {
                 File copia = gravarNoCache(nome, bytes);
                 Uri uri = FileProvider.getUriForFile(atividade, atividade.getPackageName() + ".arquivos", copia);
-                atividade.runOnUiThread(() -> compartilharArquivo(uri));
+                final String tipoFinal = tipo;
+                atividade.runOnUiThread(() -> compartilharArquivo(uri, tipoFinal));
             } catch (IOException e) {
                 return ondeSalvou != null ? "salvo:" + ondeSalvou : "erro:não consegui gravar o arquivo";
             }
@@ -82,11 +104,11 @@ public class PonteApp {
         return compartilhar ? "compartilhado" : "erro:não consegui gravar o arquivo";
     }
 
-    private void compartilharArquivo(Uri uri) {
+    private void compartilharArquivo(Uri uri, String tipo) {
         Intent envio = new Intent(Intent.ACTION_SEND);
-        envio.setType("application/json");
+        envio.setType(tipo);
         envio.putExtra(Intent.EXTRA_STREAM, uri);
-        envio.putExtra(Intent.EXTRA_SUBJECT, "Backup da Loja Caruaru");
+        envio.putExtra(Intent.EXTRA_SUBJECT, "Loja Caruaru");
         envio.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         Intent escolha = Intent.createChooser(envio, atividade.getString(R.string.compartilhar_backup));
         escolha.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -104,12 +126,12 @@ public class PonteApp {
     }
 
     /** Downloads/LojaCaruaru — a copia que sobrevive a desinstalar o aplicativo. */
-    private String gravarEmDownloads(String nome, byte[] bytes) throws IOException {
+    private String gravarEmDownloads(String nome, byte[] bytes, String tipo) throws IOException {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentResolver resolver = atividade.getContentResolver();
             ContentValues dados = new ContentValues();
             dados.put(MediaStore.Downloads.DISPLAY_NAME, nome);
-            dados.put(MediaStore.Downloads.MIME_TYPE, "application/json");
+            dados.put(MediaStore.Downloads.MIME_TYPE, tipo);
             dados.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + PASTA);
             dados.put(MediaStore.Downloads.IS_PENDING, 1);
 

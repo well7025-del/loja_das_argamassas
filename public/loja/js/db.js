@@ -4,11 +4,14 @@
    ============================================================ */
 
 const NOME_BANCO = 'argamassas-loja';
-const VERSAO = 2;
+const VERSAO = 3;
 
 /** Coleções do banco. `comprovantes` fica separado para o backup poder excluir as fotos. */
 export const COLECOES = ['produtos', 'clientes', 'vendas', 'despesas', 'contas', 'lancamentos',
-                         'comprovantes', 'config'];
+                         'comprovantes', 'documentos', 'ajustes', 'inventarios', 'extratos', 'config'];
+
+/** Coleções que guardam apenas cadastro — o backup "só cadastros" leva estas. */
+export const COLECOES_CADASTRO = ['produtos', 'clientes', 'contas', 'config'];
 
 /**
  * Contas criadas na primeira abertura. `chave` identifica a conta mesmo que o
@@ -41,6 +44,10 @@ function abrir() {
         if (nome === 'lancamentos') { store.createIndex('data', 'data'); store.createIndex('contaId', 'contaId'); }
         if (nome === 'comprovantes') store.createIndex('vendaId', 'vendaId');
         if (nome === 'produtos') store.createIndex('nome', 'nome');
+        if (nome === 'documentos') store.createIndex('referencia', ['refTipo', 'refId']);
+        if (nome === 'ajustes') { store.createIndex('data', 'data'); store.createIndex('produtoId', 'produtoId'); }
+        if (nome === 'inventarios') store.createIndex('data', 'data');
+        if (nome === 'extratos') store.createIndex('data', 'importadoEm');
       }
 
       // Banco novo: cria as contas padrão.
@@ -152,15 +159,17 @@ function acharConta(contas, pagamento) {
 }
 
 /** Lança uma receita ou despesa avulsa numa conta. */
-export function lancar({ contaId, tipo, valor, descricao, categoria = null, data = null }) {
+export function lancar({ contaId, tipo, valor, descricao, categoria = null, data = null,
+                         documento = false, refTipo = null, refId = null }) {
   return transacao(['lancamentos'], 'readwrite', tx => pedido(tx.objectStore('lancamentos').add({
     contaId, tipo, valor, descricao: descricao || '', categoria,
+    temDocumento: Boolean(documento), refTipo, refId,
     data: data || new Date().toISOString()
   })));
 }
 
 /** Transferência entre contas: sai de uma e entra na outra, na mesma operação. */
-export function transferir({ origemId, destinoId, valor, descricao = '', data = null }) {
+export function transferir({ origemId, destinoId, valor, descricao = '', data = null, documento = false }) {
   if (origemId === destinoId) throw new Error('Escolha duas contas diferentes');
   if (!(valor > 0)) throw new Error('Informe um valor maior que zero');
   return transacao(['lancamentos', 'contas'], 'readwrite', async (tx) => {
@@ -173,11 +182,46 @@ export function transferir({ origemId, destinoId, valor, descricao = '', data = 
     const quando = data || new Date().toISOString();
     const marca = `T${Date.now()}`;
     await pedido(loja.add({ contaId: origemId, tipo: 'transferencia_saida', valor: -valor,
-      descricao: descricao || `Transferência para ${destino.nome}`, transferencia: marca, data: quando }));
+      descricao: descricao || `Transferência para ${destino.nome}`, transferencia: marca,
+      temDocumento: Boolean(documento), data: quando }));
     await pedido(loja.add({ contaId: destinoId, tipo: 'transferencia_entrada', valor,
-      descricao: descricao || `Transferência de ${origem.nome}`, transferencia: marca, data: quando }));
+      descricao: descricao || `Transferência de ${origem.nome}`, transferencia: marca,
+      temDocumento: Boolean(documento), data: quando }));
     return marca;
   });
+}
+
+/* ---------------- Desconto por quantidade ---------------- */
+
+/**
+ * Faixas de desconto cadastradas no produto, por exemplo
+ * [{ qtd: 50, percentual: 5 }, { qtd: 100, percentual: 10 }].
+ * Vale a maior faixa já atingida pela quantidade do pedido.
+ */
+export function descontoPorQuantidade(produto, qtd) {
+  const faixas = (produto?.descontos || [])
+    .filter(f => Number(f.qtd) > 0 && Number(f.percentual) > 0)
+    .sort((a, b) => a.qtd - b.qtd);
+  let pct = 0;
+  for (const f of faixas) if (Number(qtd) >= Number(f.qtd)) pct = Number(f.percentual);
+  return pct;
+}
+
+/** Preço unitário já com o desconto de quantidade aplicado. */
+export function precoComDesconto(produto, qtd) {
+  const pct = descontoPorQuantidade(produto, qtd);
+  const preco = Number(produto?.preco) || 0;
+  return { pct, preco: Number((preco * (1 - pct / 100)).toFixed(4)) };
+}
+
+/** Comissão devida por um item vendido. */
+export function comissaoDoItem(produto, item) {
+  if (!produto?.comissao) return 0;
+  const qtd = Number(item.qtd) || 0;
+  const total = Number(item.total ?? (Number(item.preco) || 0) * qtd) || 0;
+  return produto.comissaoTipo === 'valor'
+    ? Number((produto.comissao * qtd).toFixed(2))
+    : Number((total * produto.comissao / 100).toFixed(2));
 }
 
 /* ---------------- Operações compostas ---------------- */
@@ -313,20 +357,265 @@ export function entradaEstoque(produtoId, quantidade, opcoes = {}) {
   });
 }
 
+/* ---------------- Documentos anexados ---------------- */
+
+/**
+ * Guarda a foto ou o PDF que autoriza um lançamento (ajuste de estoque,
+ * mudança de preço, despesa, transferência). Sem isso a trilha de auditoria
+ * fica só com a palavra de quem lançou.
+ */
+export async function anexarDocumento({ refTipo, refId, nome, imagem, observacao = '' }) {
+  if (!imagem) return null;
+  return salvar('documentos', {
+    refTipo, refId, nome: nome || 'documento', imagem, observacao,
+    criadoEm: new Date().toISOString()
+  });
+}
+
+export const documentosDe = (refTipo, refId) =>
+  porIndice('documentos', 'referencia', IDBKeyRange.only([refTipo, refId]));
+
+/* ---------------- Ajustes extraordinários de estoque ---------------- */
+
+export const MOTIVOS_AJUSTE = [
+  { id: 'perda',      rotulo: 'Perda / avaria',      sinal: -1, exigeDoc: true },
+  { id: 'devolucao',  rotulo: 'Devolução de cliente', sinal: +1, exigeDoc: false },
+  { id: 'devolucao_fornecedor', rotulo: 'Devolução ao fornecedor', sinal: -1, exigeDoc: true },
+  { id: 'inventario', rotulo: 'Acerto de inventário', sinal: 0,  exigeDoc: true },
+  { id: 'balanco',    rotulo: 'Balanço',              sinal: 0,  exigeDoc: true },
+  { id: 'bonificacao', rotulo: 'Bonificação recebida', sinal: +1, exigeDoc: false },
+  { id: 'uso_interno', rotulo: 'Uso interno / amostra', sinal: -1, exigeDoc: false }
+];
+
+/**
+ * Ajuste extraordinário: registra o antes e o depois, o motivo e o documento
+ * que autoriza — é este registro que a auditoria lê, não o saldo atual.
+ */
+export function ajustarEstoque({ produtoId, motivo, quantidade, novoSaldo = null, observacao = '',
+                                 documento = null, responsavel = '', data = null }) {
+  return transacao(['produtos', 'ajustes', 'documentos'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('produtos');
+    const p = await pedido(loja.get(produtoId));
+    if (!p) throw new Error('Produto não encontrado');
+
+    const antes = p.estoque;
+    const depois = novoSaldo !== null ? Number(novoSaldo) : Number((antes + quantidade).toFixed(3));
+    if (depois < 0) throw new Error(`O ajuste deixaria o estoque negativo (há ${antes} ${p.unidade})`);
+
+    const diferenca = Number((depois - antes).toFixed(3));
+    p.estoque = depois;
+    p.movimentos = [...(p.movimentos || []).slice(-49), {
+      data: data || new Date().toISOString(), qtd: diferenca, obs: `${motivo}${observacao ? ' — ' + observacao : ''}`,
+      saldo: depois, custoMedio: p.custo || 0
+    }];
+    await pedido(loja.put(p));
+
+    const registro = {
+      produtoId, produtoNome: p.nome, unidade: p.unidade, motivo,
+      antes, depois, diferenca,
+      valorCusto: Number((diferenca * (p.custo || 0)).toFixed(2)),
+      observacao, responsavel,
+      data: data || new Date().toISOString()
+    };
+    const id = await pedido(tx.objectStore('ajustes').add(registro));
+
+    if (documento) {
+      await pedido(tx.objectStore('documentos').add({
+        refTipo: 'ajuste', refId: id, nome: `Autorização — ${motivo}`,
+        imagem: documento, observacao, criadoEm: new Date().toISOString()
+      }));
+    }
+    return { id, antes, depois, diferenca };
+  });
+}
+
+/* ---------------- Alteração de preço com autorização ---------------- */
+
+/** Troca o preço de venda guardando quem autorizou e o documento. */
+export function alterarPreco({ produtoId, novoPreco, motivo = '', documento = null, responsavel = '' }) {
+  return transacao(['produtos', 'ajustes', 'documentos'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('produtos');
+    const p = await pedido(loja.get(produtoId));
+    if (!p) throw new Error('Produto não encontrado');
+
+    const anterior = p.preco;
+    p.preco = Number(novoPreco);
+    p.historicoPreco = [...(p.historicoPreco || []).slice(-29), {
+      data: new Date().toISOString(), de: anterior, para: p.preco, motivo, responsavel
+    }];
+    await pedido(loja.put(p));
+
+    const id = await pedido(tx.objectStore('ajustes').add({
+      produtoId, produtoNome: p.nome, motivo: 'preco',
+      antes: anterior, depois: p.preco, diferenca: Number((p.preco - anterior).toFixed(2)),
+      observacao: motivo, responsavel, data: new Date().toISOString()
+    }));
+    if (documento) {
+      await pedido(tx.objectStore('documentos').add({
+        refTipo: 'ajuste', refId: id, nome: 'Autorização — mudança de preço',
+        imagem: documento, observacao: motivo, criadoEm: new Date().toISOString()
+      }));
+    }
+    return { anterior, novo: p.preco };
+  });
+}
+
+/* ---------------- Inventário ---------------- */
+
+/**
+ * Fecha um inventário: grava a contagem e aplica a diferença de cada produto
+ * como ajuste, preservando o que foi contado x o que o sistema esperava.
+ */
+export function fecharInventario({ itens, observacao = '', responsavel = '', documento = null }) {
+  return transacao(['produtos', 'inventarios', 'ajustes', 'documentos'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('produtos');
+    const agora = new Date().toISOString();
+    const linhas = [];
+
+    for (const item of itens) {
+      const p = await pedido(loja.get(item.produtoId));
+      if (!p) continue;
+      const esperado = p.estoque;
+      const contado = Number(item.contado);
+      const diferenca = Number((contado - esperado).toFixed(3));
+      linhas.push({
+        produtoId: p.id, nome: p.nome, unidade: p.unidade,
+        esperado, contado, diferenca,
+        custo: p.custo || 0, valorDiferenca: Number((diferenca * (p.custo || 0)).toFixed(2))
+      });
+      if (diferenca !== 0) {
+        p.estoque = contado;
+        p.movimentos = [...(p.movimentos || []).slice(-49), {
+          data: agora, qtd: diferenca, obs: 'Inventário', saldo: contado, custoMedio: p.custo || 0
+        }];
+        await pedido(loja.put(p));
+        await pedido(tx.objectStore('ajustes').add({
+          produtoId: p.id, produtoNome: p.nome, unidade: p.unidade, motivo: 'inventario',
+          antes: esperado, depois: contado, diferenca,
+          valorCusto: Number((diferenca * (p.custo || 0)).toFixed(2)),
+          observacao, responsavel, data: agora
+        }));
+      }
+    }
+
+    const resumo = {
+      data: agora, responsavel, observacao,
+      itens: linhas,
+      produtosContados: linhas.length,
+      divergencias: linhas.filter(l => l.diferenca !== 0).length,
+      valorDivergencia: Number(linhas.reduce((a, l) => a + l.valorDiferenca, 0).toFixed(2))
+    };
+    const id = await pedido(tx.objectStore('inventarios').add(resumo));
+    if (documento) {
+      await pedido(tx.objectStore('documentos').add({
+        refTipo: 'inventario', refId: id, nome: 'Documento do inventário',
+        imagem: documento, observacao, criadoEm: agora
+      }));
+    }
+    return { id, ...resumo };
+  });
+}
+
+/* ---------------- Alteração de venda ---------------- */
+
+/**
+ * Regrava uma venda já lançada: devolve o estoque dos itens antigos, baixa o
+ * dos novos e refaz o lançamento na conta. Guarda o que mudou, porque uma venda
+ * alterada sem trilha é exatamente o que uma auditoria procura.
+ */
+export function alterarVenda(vendaId, mudancas, motivo = '') {
+  return transacao(['vendas', 'produtos', 'lancamentos', 'contas'], 'readwrite', async (tx) => {
+    const lojaVendas = tx.objectStore('vendas');
+    const lojaProdutos = tx.objectStore('produtos');
+    const venda = await pedido(lojaVendas.get(vendaId));
+    if (!venda) throw new Error('Venda não encontrada');
+    if (venda.cancelada) throw new Error('Venda cancelada não pode ser alterada');
+
+    const anterior = JSON.parse(JSON.stringify({
+      itens: venda.itens, total: venda.total, desconto: venda.desconto,
+      pagamento: venda.pagamento, clienteId: venda.clienteId
+    }));
+
+    // devolve o estoque dos itens atuais
+    if (mudancas.itens) {
+      for (const item of venda.itens) {
+        const p = await pedido(lojaProdutos.get(item.produtoId));
+        if (!p) continue;
+        p.estoque = Number((p.estoque + item.qtd).toFixed(3));
+        await pedido(lojaProdutos.put(p));
+      }
+      // e baixa os novos
+      for (const item of mudancas.itens) {
+        const p = await pedido(lojaProdutos.get(item.produtoId));
+        if (!p) throw new Error('Produto do pedido não encontrado');
+        if (p.estoque < item.qtd) throw new Error(`Estoque insuficiente de ${p.nome}: há ${p.estoque} ${p.unidade}`);
+        p.estoque = Number((p.estoque - item.qtd).toFixed(3));
+        await pedido(lojaProdutos.put(p));
+      }
+      venda.itens = mudancas.itens;
+    }
+
+    for (const campo of ['desconto', 'descontoQuantidade', 'pagamento', 'clienteId', 'clienteNome', 'clienteTelefone', 'observacao']) {
+      if (mudancas[campo] !== undefined) venda[campo] = mudancas[campo];
+    }
+
+    venda.subtotal = Number(venda.itens.reduce((a, i) => a + i.total, 0).toFixed(2));
+    venda.total = Number((venda.subtotal - (venda.desconto || 0)).toFixed(2));
+    venda.custo = Number(venda.itens.reduce((a, i) => a + i.custo * i.qtd, 0).toFixed(2));
+    venda.lucro = Number((venda.total - venda.custo).toFixed(2));
+
+    venda.alteracoes = [...(venda.alteracoes || []), {
+      data: new Date().toISOString(), motivo,
+      de: { total: anterior.total, desconto: anterior.desconto, pagamento: anterior.pagamento, itens: anterior.itens.length },
+      para: { total: venda.total, desconto: venda.desconto, pagamento: venda.pagamento, itens: venda.itens.length }
+    }];
+    await pedido(lojaVendas.put(venda));
+
+    // refaz o lançamento financeiro: estorna o antigo e lança o novo
+    const lancamentos = tx.objectStore('lancamentos');
+    const todos = await pedido(lancamentos.getAll());
+    for (const l of todos) {
+      if (l.refTipo === 'venda' && l.refId === vendaId && l.tipo === 'venda') {
+        await pedido(lancamentos.delete(l.id));
+      }
+    }
+    const contas = await pedido(tx.objectStore('contas').getAll());
+    const conta = contas.find(c => c.ativa !== false && (c.recebe || []).includes(venda.pagamento));
+    venda.contaId = conta?.id ?? null;
+    await pedido(lojaVendas.put(venda));
+    if (conta) {
+      await pedido(lancamentos.add({
+        contaId: conta.id, data: venda.data, tipo: 'venda', valor: venda.total,
+        descricao: `Venda ${venda.codigo} (alterada)`, refTipo: 'venda', refId: vendaId
+      }));
+    }
+    return venda;
+  });
+}
+
 /* ---------------- Backup ---------------- */
 
 /** Exporta todo o banco para um objeto simples, pronto para virar JSON. */
-export async function exportarTudo({ incluirFotos = true } = {}) {
+export async function exportarTudo({ incluirFotos = true, somenteCadastros = false } = {}) {
   const dados = {};
-  for (const colecao of COLECOES) {
+  const colecoes = somenteCadastros ? COLECOES_CADASTRO : COLECOES;
+  for (const colecao of colecoes) {
     if (colecao === 'comprovantes' && !incluirFotos) { dados[colecao] = []; continue; }
     dados[colecao] = await listar(colecao);
+  }
+  if (somenteCadastros) {
+    // o backup de cadastros serve para começar outra loja ou outro celular:
+    // vai sem estoque e sem nada que dependa de venda
+    dados.produtos = (dados.produtos || []).map(p => ({ ...p, estoque: 0 }));
+    dados.contas = (dados.contas || []).map(c => ({ ...c, saldoInicial: 0 }));
+    dados.config = (dados.config || []).filter(c => c.chave !== 'contadorVendas');
   }
   return {
     aplicativo: 'Loja das Argamassas — Caruaru',
     versao: VERSAO,
     geradoEm: new Date().toISOString(),
-    incluiFotos: incluirFotos,
+    incluiFotos: somenteCadastros ? false : incluirFotos,
+    tipo: somenteCadastros ? 'cadastros' : 'completo',
     dados
   };
 }

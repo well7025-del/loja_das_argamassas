@@ -17,13 +17,15 @@ const MANTER_NO_DRIVE = 12;
 
 const carimbo = () => new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', 'h');
 
-export async function gerarBackup({ incluirFotos = true } = {}) {
-  const conteudo = await exportarTudo({ incluirFotos });
+export async function gerarBackup({ incluirFotos = true, somenteCadastros = false } = {}) {
+  const conteudo = await exportarTudo({ incluirFotos, somenteCadastros });
   const texto = JSON.stringify(conteudo);
+  const prefixo = somenteCadastros ? 'cadastros-loja-caruaru' : 'backup-loja-caruaru';
   return {
-    nome: `backup-loja-caruaru-${carimbo()}.json`,
+    nome: `${prefixo}-${carimbo()}.json`,
     blob: new Blob([texto], { type: 'application/json' }),
     tamanho: texto.length,
+    tipo: conteudo.tipo,
     registros: Object.values(conteudo.dados).reduce((a, v) => a + (Array.isArray(v) ? v.length : 0), 0)
   };
 }

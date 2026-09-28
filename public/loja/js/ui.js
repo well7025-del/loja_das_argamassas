@@ -29,8 +29,33 @@ export function anexar(pai, ...filhos) {
   return pai;
 }
 
+/**
+ * Envolve uma função de desenho chamada de dentro do `onchange` de um campo
+ * que ela própria vai remover: o desenho passa a rodar fora do manipulador
+ * (senão o blur do campo removido dispara `change` de novo e a função reentra
+ * no meio da limpeza) e a reentrada é ignorada.
+ */
+export function redesenho(fn) {
+  let rodando = false;
+  return (...args) => {
+    if (rodando) return;
+    rodando = true;
+    queueMicrotask(() => {
+      try { fn(...args); } finally { rodando = false; }
+    });
+  };
+}
+
 export const $ = (s, r = document) => r.querySelector(s);
-export const limpar = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
+/* replaceChildren em vez de removeChild: redesenhar uma lista de dentro do
+   onchange de um dos seus próprios campos tirava o nó do foco no meio do
+   caminho e o removeChild estourava. */
+export const limpar = (n) => {
+  if (!n) return n;
+  if (n.replaceChildren) n.replaceChildren();
+  else while (n.firstChild) n.firstChild.remove();
+  return n;
+};
 
 /* ---------------- Formatação ---------------- */
 export const dinheiro = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
