@@ -26,11 +26,10 @@ export async function render(raiz) {
   [de, ate].forEach(c => c.addEventListener('change', desenhar));
 
   const dados = {};
-  [dados.vendas, dados.ajustes, dados.produtos, dados.lancamentos, dados.despesas,
-   dados.inventarios, dados.documentos, dados.contas, dados.loja] = await Promise.all([
+  [dados.vendas, dados.ajustes, dados.produtos, dados.lancamentos,
+   dados.documentos, dados.contas, dados.loja] = await Promise.all([
     listar('vendas'), listar('ajustes'), listar('produtos'), listar('lancamentos'),
-    listar('despesas'), listar('inventarios'), listar('documentos'), listar('contas'),
-    config('loja', {})
+    listar('documentos'), listar('contas'), config('loja', {})
   ]);
   const nomeConta = (id) => dados.contas.find(c => c.id === id)?.nome || `conta ${id}`;
 
