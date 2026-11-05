@@ -10,7 +10,8 @@ import { listar, salvar, saldos, config } from '../db.js';
 import {
   el, limpar, dinheiro, numero, dataBR, erro, sucesso, aviso, painel, vazio,
   kpi, cartao, confirmar, anexar } from '../ui.js';
-import { lerExtrato, conferir, aprovarConciliacao, aprovarLancamento } from '../conciliacao.js';
+import { lerExtrato, lerArquivoExtrato, conferir, aprovarConciliacao, aprovarLancamento } from '../conciliacao.js';
+import { nomeForma } from '../regras.js';
 import { pdfTabela, entregarPdf, dinheiroPdf } from '../documentos.js';
 
 const CATEGORIAS = ['aluguel', 'salario', 'comissao', 'energia', 'agua', 'internet', 'impostos',
@@ -20,9 +21,10 @@ export async function render(raiz) {
   const contas = await saldos();
   const corpo = el('div');
   const seletorConta = el('select', {}, contas.map(c => el('option', { value: c.id, text: c.nome })));
-  const entradaArquivo = el('input', {
-    type: 'file', accept: '.ofx,.csv,.txt,text/csv,text/plain', hidden: true
-  });
+  // Sem "accept" de propósito: o Android não conhece o tipo do .ofx e marca o
+  // CSV do banco como planilha ou "arquivo binário" — com filtro, o seletor
+  // escondia justamente os extratos. O formato é conferido pelo conteúdo.
+  const entradaArquivo = el('input', { type: 'file', hidden: true });
   let analise = null;
   let conta = null;
   let nomeArquivo = '';
@@ -34,7 +36,7 @@ export async function render(raiz) {
     conta = contas.find(c => c.id === Number(seletorConta.value));
     try {
       aviso('Lendo o extrato…');
-      const texto = await arquivo.text();
+      const texto = await lerArquivoExtrato(arquivo);
       const linhas = lerExtrato(texto, arquivo.name);
       const vendas = await listar('vendas');
       analise = conferir(linhas, vendas, { conta });
@@ -232,8 +234,8 @@ export async function render(raiz) {
         el('div', { class: 'lista rolagem' }, analise.vendasSemExtrato.map(v =>
           el('div', { class: 'item' }, [
             el('div', { class: 'info' }, [
-              el('div', { class: 'titulo', text: v.codigo }),
-              el('div', { class: 'sub', text: `${dataBR(v.data)} · ${v.clienteNome || 'sem cliente'} · ${v.pagamento}` })
+              el('div', { class: 'titulo', text: v.codigo + (v.dividida ? ' · parte da venda' : '') }),
+              el('div', { class: 'sub', text: `${dataBR(v.data)} · ${v.clienteNome || 'sem cliente'} · ${nomeForma(v.forma)}` })
             ]),
             el('span', { class: 'valor', text: dinheiro(v.total) })
           ])))

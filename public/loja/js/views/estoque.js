@@ -6,7 +6,7 @@
    comissão e faixas de desconto por quantidade.
    ============================================================ */
 import {
-  listar, salvar, remover, entradaEstoque, saldos, ajustarEstoque, alterarPreco,
+  listar, salvarProduto, remover, entradaEstoque, saldos, ajustarEstoque, alterarPreco,
   documentosDe, MOTIVOS_AJUSTE, config
 } from '../db.js';
 import { recalcularPendencias } from '../app.js';
@@ -30,8 +30,9 @@ export async function render(raiz) {
 
   anexar(raiz,
     el('div', { class: 'busca-linha' }, [busca, btnAlerta]),
-    el('div', { class: 'grade3 mb' }, [
+    el('div', { class: 'grade2 mb' }, [
       el('button', { class: 'btn btn-acao btn-sm', onclick: () => formulario() }, '+ Produto'),
+      el('a', { class: 'btn btn-vazio btn-sm', href: '#/movimento' }, '📈 Movimento'),
       el('a', { class: 'btn btn-vazio btn-sm', href: '#/inventario' }, '📋 Inventário'),
       el('button', { class: 'btn btn-vazio btn-sm', onclick: compartilharCatalogo }, '📤 Catálogo')
     ]),
@@ -330,7 +331,9 @@ export async function render(raiz) {
       custo: el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: produto?.custo ?? 0 }),
       preco: el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: produto?.preco ?? 0 }),
       estoqueMin: el('input', { type: 'number', inputmode: 'decimal', step: '1', min: '0', value: produto?.estoqueMin ?? 0 }),
-      estoque: el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: produto?.estoque ?? 0 }),
+      // produto já cadastrado: o saldo só muda por Entrada ou Ajuste, que registram o motivo
+      estoque: el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: produto?.estoque ?? 0,
+                              disabled: Boolean(produto), title: produto ? 'Use + Entrada ou ⚖️ Ajuste para mudar o saldo' : '' }),
       comissao: el('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: produto?.comissao ?? 0 })
     };
     const comissaoTipo = el('select', {}, [
@@ -390,7 +393,7 @@ export async function render(raiz) {
         ]),
         info,
         el('div', { class: 'linha mt' }, [
-          el('div', { class: 'campo' }, [el('label', { text: 'Estoque atual' }), campos.estoque]),
+          el('div', { class: 'campo' }, [el('label', { text: produto ? 'Estoque atual (use Entrada/Ajuste)' : 'Estoque inicial' }), campos.estoque]),
           el('div', { class: 'campo' }, [el('label', { text: 'Estoque mínimo' }), campos.estoqueMin])
         ]),
 
@@ -421,15 +424,15 @@ export async function render(raiz) {
         { rotulo: 'Salvar', class: 'btn-primario', acao: async (fechar) => {
           if (!campos.nome.value.trim()) { erro('Informe o nome'); return; }
           const validas = faixas.filter(f => f.qtd > 0 && f.percentual > 0);
-          await salvar('produtos', {
-            ...(produto || { ativo: true, movimentos: [] }),
+          await salvarProduto({
+            ...(produto || { ativo: true, movimentos: [], criadoEm: new Date().toISOString() }),
             nome: campos.nome.value.trim(),
             categoria: campos.categoria.value.trim(),
             unidade: campos.unidade.value.trim().toUpperCase() || 'UN',
             custo: Number(campos.custo.value) || 0,
             preco: Number(campos.preco.value) || 0,
             estoqueMin: Number(campos.estoqueMin.value) || 0,
-            estoque: Number(campos.estoque.value) || 0,
+            estoque: produto ? produto.estoque : (Number(campos.estoque.value) || 0),
             comissao: Number(campos.comissao.value) || 0,
             comissaoTipo: comissaoTipo.value,
             descontos: validas.sort((a, b) => a.qtd - b.qtd),

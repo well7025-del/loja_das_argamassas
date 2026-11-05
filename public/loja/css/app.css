@@ -252,3 +252,18 @@ textarea { min-height:80px; resize:vertical; }
 .mt { margin-top:12px; } .mb { margin-bottom:12px; }
 .flex { display:flex; gap:9px; align-items:center; }
 .rolagem { max-height:60vh; overflow-y:auto; }
+
+/* Movimento de estoque: tabela compacta que cabe na largura do celular */
+.tabela-mov { display:grid; grid-template-columns:minmax(0,2.4fr) repeat(4,minmax(0,1fr)); gap:6px; align-items:center;
+  width:100%; padding:10px 12px; border:0; border-bottom:1px solid var(--cinza-200); background:none; font:inherit;
+  font-size:13px; text-align:right; color:inherit; }
+.tabela-mov > span:first-child { text-align:left; }
+.tabela-mov .nome { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tabela-mov .nome small { color:var(--cinza-500); }
+.tabela-mov .ent { color:var(--verde-700); }
+.tabela-mov .sai { color:var(--vermelho-600); }
+.tabela-mov .fim { font-weight:700; }
+.tabela-mov.cab { font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--cinza-500); background:var(--cinza-100); }
+.tabela-mov.total { font-weight:700; background:var(--cinza-100); border-bottom:0; }
+button.tabela-mov:active { background:var(--azul-050); }
+.item-pedido { align-items:flex-start; }

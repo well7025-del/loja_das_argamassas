@@ -10,6 +10,7 @@ import {
   el, limpar, dinheiro, numero, percentual, dataBR, dataHora, erro, sucesso, painel, vazio,
   kpi, cartao, hoje, diasAtras, anexar } from '../ui.js';
 import { pdfTabela, entregarPdf, dinheiroPdf, qtdPdf } from '../documentos.js';
+import { pagamentosDe, descreverPagamento } from '../regras.js';
 
 const dia = (iso) => String(iso).slice(0, 10);
 const MOTIVO = {
@@ -60,8 +61,11 @@ export async function render(raiz) {
     const mudancasPreco = todosAjustes.filter(a => a.motivo === 'preco');
     const semDocumento = ajustes.filter(a =>
       !dados.documentos.some(d => d.refTipo === 'ajuste' && d.refId === a.id));
-    const semComprovante = vendas.filter(v => !v.cancelada && !v.temComprovante && v.pagamento !== 'dinheiro');
-    const naoConciliadas = vendas.filter(v => !v.cancelada && !v.conciliada && v.pagamento !== 'dinheiro');
+    // venda com alguma parte fora do dinheiro precisa de comprovante e de conferência no extrato
+    const eletronica = (v) => pagamentosDe(v).some(p => p.forma !== 'dinheiro' && p.valor > 0);
+    const semComprovante = vendas.filter(v => !v.cancelada && !v.temComprovante && eletronica(v));
+    const naoConciliadas = vendas.filter(v => !v.cancelada && eletronica(v) &&
+      pagamentosDe(v).some(p => p.forma !== 'dinheiro' && p.valor > 0 && !p.conciliado));
 
     const valorAjustes = ajustes.reduce((a, r) => a + Math.abs(r.valorCusto || 0), 0);
 
@@ -93,7 +97,9 @@ export async function render(raiz) {
         item('💰', 'Razão das contas (movimento financeiro)', `${noPeriodo(dados.lancamentos).length} lançamento(s)`,
           () => pdfRazao(noPeriodo(dados.lancamentos))),
         item('📋', 'Posição de estoque valorizada', `${dados.produtos.length} produto(s)`,
-          () => pdfPosicaoEstoque())
+          () => pdfPosicaoEstoque()),
+        item('📈', 'Movimento de estoque por período', 'Saldo inicial, entradas, saídas e saldo final',
+          () => { location.hash = '#/movimento'; })
       ])),
 
       ajustes.length
@@ -165,7 +171,7 @@ export async function render(raiz) {
       linhas.push({ separador: 'VENDAS CANCELADAS' });
       for (const v of canceladas) linhas.push({
         codigo: v.codigo, data: dataBR(v.data), cliente: v.clienteNome || 'sem cliente',
-        detalhe: `${v.itens.length} item(ns) · ${v.pagamento}`, valor: dinheiroPdf(v.total),
+        detalhe: `${v.itens.length} item(ns) · ${descreverPagamento(v, dinheiroPdf)}`, valor: dinheiroPdf(v.total),
         cor: [0.78, 0.16, 0.16]
       });
     }
@@ -284,7 +290,7 @@ export async function render(raiz) {
       ],
       linhas: vendas.map(v => ({
         codigo: v.codigo, data: dataBR(v.data), cliente: v.clienteNome || 'sem cliente',
-        pagamento: v.pagamento, valor: dinheiroPdf(v.total)
+        pagamento: descreverPagamento(v, dinheiroPdf), valor: dinheiroPdf(v.total)
       })),
       resumo: [
         { rotulo: 'Vendas sem comprovante', valor: String(vendas.length) },
@@ -308,7 +314,7 @@ export async function render(raiz) {
       ],
       linhas: vendas.map(v => ({
         codigo: v.codigo, data: dataBR(v.data), cliente: v.clienteNome || 'sem cliente',
-        pagamento: v.pagamento, valor: dinheiroPdf(v.total)
+        pagamento: descreverPagamento(v, dinheiroPdf), valor: dinheiroPdf(v.total)
       })),
       resumo: [
         { rotulo: 'Vendas pendentes', valor: String(vendas.length) },

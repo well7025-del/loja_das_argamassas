@@ -4,7 +4,7 @@
    funciona sem internet e o backup vai para o Google Drive.
    ============================================================ */
 import { $, el, limpar, erro, aviso, painel, dinheiro } from './ui.js';
-import { config, definirConfig, listar, salvar } from './db.js';
+import { config, definirConfig, listar, salvar, atualizarEsquema } from './db.js';
 import { backupAutomatico, statusBackup } from './backup.js';
 
 export const estado = { loja: null, pendencias: [] };
@@ -21,6 +21,7 @@ const ROTAS = {
   despesas:  { titulo: 'Despesas',      carregar: () => import('./views/despesas.js') },
   relatorio: { titulo: 'Resultado',     carregar: () => import('./views/relatorio.js') },
   inventario:  { titulo: 'Inventário',    carregar: () => import('./views/inventario.js') },
+  movimento:   { titulo: 'Movimento de estoque', carregar: () => import('./views/movimento.js') },
   auditoria:   { titulo: 'Auditoria',     carregar: () => import('./views/auditoria.js') },
   conciliacao: { titulo: 'Conferência do extrato', carregar: () => import('./views/conciliacao.js') },
   comissoes:   { titulo: 'Comissões',     carregar: () => import('./views/comissoes.js') },
@@ -216,6 +217,16 @@ async function iniciar() {
 
   if (!(await config('configurado'))) await boasVindas();
   estado.loja = await config('loja', { nome: 'Loja Caruaru', telefone: '' });
+
+  // dados da versão anterior: vendas ganham a lista de pagamentos e o livro de
+  // estoque é montado a partir do histórico — uma vez só, na primeira abertura
+  try {
+    const r = await atualizarEsquema();
+    if (r.atualizado && r.de < 4) aviso('Dados atualizados para a nova versão', 'ok');
+  } catch (e) {
+    console.error('Atualização dos dados', e);
+    erro('Não consegui atualizar os dados para a nova versão: ' + e.message);
+  }
 
   await navegar();
   await recalcularPendencias();

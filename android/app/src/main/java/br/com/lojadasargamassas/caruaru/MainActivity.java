@@ -181,13 +181,16 @@ public class MainActivity extends AppCompatActivity {
     /* ---------------- Escolha de arquivo e foto ---------------- */
 
     private boolean abrirSeletor(WebChromeClient.FileChooserParams parametros) {
-        String[] aceitos = parametros.getAcceptTypes();
-        String tipo = (aceitos != null && aceitos.length > 0 && !aceitos[0].isEmpty()) ? aceitos[0] : "*/*";
-        boolean querImagem = tipo.startsWith("image/");
+        boolean querImagem = soImagens(parametros.getAcceptTypes());
 
+        // So a foto usa filtro. Para qualquer outro arquivo (backup, extrato do
+        // banco) o seletor abre sem filtro: o "accept" da pagina pode trazer uma
+        // extensao (".ofx"), que nao e tipo MIME, e o Android nao reconhece o tipo
+        // de .ofx nem do .csv que o banco salva — com filtro, esses arquivos
+        // simplesmente nao apareciam para escolher.
         Intent conteudo = new Intent(Intent.ACTION_GET_CONTENT);
         conteudo.addCategory(Intent.CATEGORY_OPENABLE);
-        conteudo.setType(tipo.equals("application/json") ? "*/*" : tipo);
+        conteudo.setType(querImagem ? "image/*" : "*/*");
 
         Intent camera = querImagem ? criarIntentCamera() : null;
 
@@ -204,6 +207,22 @@ public class MainActivity extends AppCompatActivity {
             cancelarEscolha();
             return false;
         }
+    }
+
+    /** Verdadeiro so quando todos os tipos aceitos pela pagina sao de imagem. */
+    private static boolean soImagens(@Nullable String[] aceitos) {
+        if (aceitos == null) return false;
+        boolean algum = false;
+        for (String grupo : aceitos) {
+            if (grupo == null) continue;
+            for (String tipo : grupo.split(",")) {
+                String t = tipo.trim().toLowerCase(java.util.Locale.ROOT);
+                if (t.isEmpty()) continue;
+                if (!t.startsWith("image/")) return false;
+                algum = true;
+            }
+        }
+        return algum;
     }
 
     private @Nullable Intent criarIntentCamera() {

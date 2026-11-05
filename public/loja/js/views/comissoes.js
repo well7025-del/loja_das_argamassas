@@ -4,8 +4,13 @@
    A regra fica no cadastro do produto (percentual sobre a venda ou valor
    fixo por unidade). Aqui só se apura o período: o que cada produto gerou
    de comissão, para conferir e pagar.
+
+   A percentual incide sobre o valor LÍQUIDO de cada item: depois do desconto
+   por quantidade, do desconto dado no item e da parte que cabe ao item no
+   desconto geral do pedido. A por unidade não depende de preço.
    ============================================================ */
-import { listar, config, comissaoDoItem, registrarDespesa, saldos } from '../db.js';
+import { listar, config, registrarDespesa, saldos } from '../db.js';
+import { comissaoDoItem, valorLiquidoItem } from '../regras.js';
 import {
   el, limpar, dinheiro, numero, percentual, dataBR, erro, sucesso, painel, vazio,
   kpi, cartao, hoje, diasAtras, confirmar, anexar } from '../ui.js';
@@ -45,28 +50,35 @@ export async function render(raiz) {
     for (const v of validas) {
       for (const item of v.itens) {
         const produto = porId.get(item.produtoId);
-        const comissao = comissaoDoItem(produto, item);
         if (!produto || !Number(produto.comissao)) continue;
+        const comissao = comissaoDoItem(produto, item, v);
+        const liquido = valorLiquidoItem(v, item);
         const atual = linhas.get(item.produtoId) || {
           nome: produto.nome, unidade: produto.unidade,
           regra: produto.comissaoTipo === 'valor'
             ? `${dinheiro(produto.comissao)}/${produto.unidade}`
             : `${percentual(produto.comissao)} da venda`,
-          qtd: 0, faturamento: 0, comissao: 0
+          qtd: 0, bruto: 0, descontos: 0, faturamento: 0, comissao: 0
         };
+        const tabela = (Number(item.precoTabela) || Number(item.preco) || 0) * (Number(item.qtd) || 0);
         atual.qtd += Number(item.qtd) || 0;
-        atual.faturamento += Number(item.total) || 0;
+        atual.bruto += tabela;
+        atual.descontos += Math.max(0, tabela - liquido);
+        atual.faturamento += liquido;
         atual.comissao += comissao;
         linhas.set(item.produtoId, atual);
       }
     }
     const lista = [...linhas.values()]
-      .map(l => ({ ...l, comissao: Number(l.comissao.toFixed(2)) }))
+      .map(l => ({ ...l, comissao: Number(l.comissao.toFixed(2)), bruto: Number(l.bruto.toFixed(2)),
+                   descontos: Number(l.descontos.toFixed(2)), faturamento: Number(l.faturamento.toFixed(2)) }))
       .sort((a, b) => b.comissao - a.comissao);
     return {
       de: de.value, ate: ate.value, lista,
       vendas: validas.length,
       faturamento: lista.reduce((a, l) => a + l.faturamento, 0),
+      bruto: lista.reduce((a, l) => a + l.bruto, 0),
+      descontos: lista.reduce((a, l) => a + l.descontos, 0),
       total: Number(lista.reduce((a, l) => a + l.comissao, 0).toFixed(2))
     };
   }
@@ -79,8 +91,8 @@ export async function render(raiz) {
       el('div', { class: 'grade2 mb' }, [
         kpi({ rot: 'Comissão a pagar', val: dinheiro(a.total), cor: 'verde',
               det: `${numero(a.lista.length)} produto(s) com regra` }),
-        kpi({ rot: 'Faturamento comissionado', val: dinheiro(a.faturamento), cor: 'amarelo',
-              det: a.faturamento ? `${percentual(a.total / a.faturamento * 100)} do valor vendido` : '—' })
+        kpi({ rot: 'Base líquida', val: dinheiro(a.faturamento), cor: 'amarelo',
+              det: a.descontos > 0 ? `já sem ${dinheiro(a.descontos)} de descontos` : 'sem descontos no período' })
       ]),
 
       !comComissao.length
@@ -95,7 +107,8 @@ export async function render(raiz) {
               el('div', { class: 'info' }, [
                 el('div', { class: 'titulo', text: l.nome }),
                 el('div', { class: 'sub', text:
-                  `${numero(l.qtd, 2)} ${l.unidade} · ${dinheiro(l.faturamento)} · ${l.regra}` })
+                  `${numero(l.qtd, 2)} ${l.unidade} · líquido ${dinheiro(l.faturamento)}` +
+                  (l.descontos > 0 ? ` (−${dinheiro(l.descontos)} desc.)` : '') + ` · ${l.regra}` })
               ]),
               el('span', { class: 'valor', text: dinheiro(l.comissao) })
             ]))))
@@ -117,19 +130,26 @@ export async function render(raiz) {
           { titulo: 'PRODUTO', campo: 'nome', peso: 4 },
           { titulo: 'REGRA', campo: 'regra', peso: 2 },
           { titulo: 'QTD', campo: 'qtd', peso: 1.1, alinhamento: 'direita' },
-          { titulo: 'FATURAMENTO', campo: 'faturamento', peso: 1.8, alinhamento: 'direita' },
+          { titulo: 'VALOR TABELA', campo: 'bruto', peso: 1.7, alinhamento: 'direita' },
+          { titulo: 'DESCONTOS', campo: 'descontos', peso: 1.5, alinhamento: 'direita' },
+          { titulo: 'LÍQUIDO', campo: 'faturamento', peso: 1.7, alinhamento: 'direita' },
           { titulo: 'COMISSÃO', campo: 'comissao', peso: 1.6, alinhamento: 'direita' }
         ],
         linhas: a.lista.map(l => ({
           nome: l.nome, regra: l.regra, qtd: qtdPdf(l.qtd),
+          bruto: dinheiroPdf(l.bruto), descontos: dinheiroPdf(l.descontos),
           faturamento: dinheiroPdf(l.faturamento), comissao: dinheiroPdf(l.comissao)
         })),
         resumo: [
-          { rotulo: 'Faturamento comissionado', valor: dinheiroPdf(a.faturamento) },
+          { rotulo: 'Valor de tabela', valor: dinheiroPdf(a.bruto) },
+          { rotulo: 'Descontos concedidos', valor: '- ' + dinheiroPdf(a.descontos) },
+          { rotulo: 'Base líquida da comissão', valor: dinheiroPdf(a.faturamento) },
           { rotulo: 'TOTAL DE COMISSÃO', valor: dinheiroPdf(a.total) }
         ],
         observacao: 'Apuração pelas vendas efetivadas no período, já descontados os cancelamentos. '
-          + 'A regra de cada produto é a cadastrada no estoque na data desta emissão.'
+          + 'A comissão percentual incide sobre o valor líquido de cada item: tabela menos o desconto por '
+          + 'quantidade, o desconto no item e a parte do item no desconto geral do pedido. A comissão por '
+          + 'unidade não muda com desconto. A regra de cada produto é a cadastrada na data desta emissão.'
       });
       sucesso(await entregarPdf(bytes, `comissoes-${a.de}-a-${a.ate}.pdf`));
     } catch (e) { erro('Não consegui gerar o PDF: ' + e.message); }

@@ -12,7 +12,8 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "reset-db": "node server/reset.js",
-    "demo": "node server/demo.js"
+    "demo": "node server/demo.js",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {},
   "optionalDependencies": {

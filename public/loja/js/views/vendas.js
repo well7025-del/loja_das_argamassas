@@ -1,16 +1,15 @@
 /* Histórico de vendas: consulta, alteração, comprovante em PDF e reenvio do recibo. */
-import {
-  listar, porIndice, cancelarVenda, alterarVenda, salvar, config, precoComDesconto } from '../db.js';
+import { listar, porIndice, cancelarVenda, alterarVenda, salvar, config } from '../db.js';
+import { calcularLinha, montarItem, totalizarVenda, pagamentosDe, nomeForma, descreverPagamento } from '../regras.js';
+import { editorPagamentos, painelDescontoItem } from '../componentes.js';
 import { estado } from '../app.js';
 import {
   el, limpar, dinheiro, numero, percentual, dataHora, erro, sucesso, painel, vazio,
   abrirWhatsApp, numeroWhatsApp, copiar, confirmar, atrasar, diasAtras, hoje, kpi,
   telefoneBR, redesenho, anexar } from '../ui.js';
 import { impressoraDisponivel, imprimirCupom } from '../impressora.js';
-import { pdfComprovante, entregarPdf, nomeArquivoSeguro } from '../documentos.js';
+import { pdfComprovante, entregarPdf, nomeArquivoSeguro, textoRecibo, pixParaVenda } from '../documentos.js';
 
-const PAGAMENTO = { dinheiro: 'Dinheiro', pix: 'PIX', debito: 'Débito', credito: 'Crédito' };
-const FORMAS = ['dinheiro', 'pix', 'debito', 'credito'];
 
 export async function render(raiz) {
   const corpo = el('div');
@@ -64,7 +63,7 @@ export async function render(raiz) {
                   (v.alteracoes || []).length ? el('span', { class: 'etiqueta et-amarela', style: { marginLeft: '6px' }, text: 'alterada' }) : null,
                   v.cancelada ? el('span', { class: 'etiqueta et-vermelha', style: { marginLeft: '6px' }, text: 'cancelada' }) : null
                 ]),
-                el('div', { class: 'sub', text: `${dataHora(v.data)} · ${v.clienteNome || 'sem cliente'} · ${PAGAMENTO[v.pagamento] || v.pagamento}` })
+                el('div', { class: 'sub', text: `${dataHora(v.data)} · ${v.clienteNome || 'sem cliente'} · ${descreverPagamento(v, dinheiro)}` })
               ]),
               el('span', { class: 'valor', style: v.cancelada ? { textDecoration: 'line-through', color: 'var(--cinza-500)' } : {}, text: dinheiro(v.total) })
             ]))))
@@ -74,43 +73,19 @@ export async function render(raiz) {
 
   /* ---------------- recibo ---------------- */
 
-  function textoRecibo(venda, loja, pix) {
-    const linhas = [
-      `*${loja.nome || 'Loja das Argamassas — Caruaru'}*`,
-      loja.endereco || null,
-      loja.whatsapp || loja.telefone || null, '',
-      `*Comprovante de venda ${venda.codigo}*`, `Data: ${dataHora(venda.data)}`,
-      venda.clienteNome ? `Cliente: ${venda.clienteNome}` : null, '',
-      ...venda.itens.map(i => `• ${numero(i.qtd)}x ${i.nome} — ${dinheiro(i.total)}`
-        + (i.descontoQtd ? ` (−${percentual(i.descontoQtd)})` : '')), '',
-      venda.descontoQuantidade > 0 ? `Desconto por quantidade: -${dinheiro(venda.descontoQuantidade)}` : null,
-      venda.desconto > 0 ? `Desconto no pedido: -${dinheiro(venda.desconto)}` : null,
-      `*Total: ${dinheiro(venda.total)}*`,
-      `Pagamento: ${PAGAMENTO[venda.pagamento] || venda.pagamento}`
-    ];
-    if (pix?.chave) {
-      linhas.push('', '*Pagamento via PIX*', `Chave (${pix.tipo || 'PIX'}):`, pix.chave);
-      if (pix.titular) linhas.push(`Titular: ${pix.titular}`);
-      if (pix.banco) linhas.push(`Banco: ${pix.banco}`);
-    }
-    linhas.push('', 'Obrigado pela preferência!');
-    return linhas.filter(l => l !== null).join('\n');
-  }
-
   /* ---------------- detalhe da venda ---------------- */
 
   async function abrir(venda) {
     const comprovantes = await porIndice('comprovantes', 'vendaId', IDBKeyRange.only(venda.id));
     const foto = comprovantes[0]?.imagem;
     const loja = await config('loja', estado.loja || {});
-    const pixConfig = await config('pix', null);
-    const pix = (pixConfig?.chave && (venda.pagamento === 'pix' || pixConfig.sempre)) ? pixConfig : null;
+    const pix = pixParaVenda(venda, await config('pix', null));
     const texto = textoRecibo(venda, loja, pix);
     const zap = numeroWhatsApp(venda.clienteTelefone);
 
     const conteudo = el('div', {}, [
       venda.cancelada ? el('div', { class: 'aviso aviso-vermelho', text: 'Esta venda foi cancelada.' }) : null,
-      el('div', { class: 'pq mudo mb', text: `${dataHora(venda.data)} · ${PAGAMENTO[venda.pagamento] || venda.pagamento}` }),
+      el('div', { class: 'pq mudo mb', text: `${dataHora(venda.data)} · ${descreverPagamento(venda, dinheiro)}` }),
       el('div', { class: 'cartao mb' }, el('div', { class: 'cartao-corpo' }, [
         el('div', { class: 'pq negrito', text: 'Cliente' }),
         el('div', { text: venda.clienteNome || 'Sem cliente identificado' }),
@@ -125,18 +100,31 @@ export async function render(raiz) {
           el('div', { class: 'info' }, [
             el('div', { class: 'titulo', text: i.nome }),
             el('div', { class: 'sub', text: `${numero(i.qtd)} ${i.unidade} × ${dinheiro(i.preco)}`
-              + (i.descontoQtd ? ` · −${percentual(i.descontoQtd)} por quantidade` : '') })
+              + (i.descontoQtd ? ` · −${percentual(i.descontoQtd)} por quantidade` : '')
+              + (i.descontoItem > 0 ? ` · −${dinheiro(i.descontoItem)} no item` : '') })
           ]),
           el('span', { class: 'valor', text: dinheiro(i.total) })
         ])))),
       venda.descontoQuantidade > 0
-        ? el('div', { class: 'total-linha', style: { color: 'var(--verde)' } },
+        ? el('div', { class: 'total-linha', style: { color: 'var(--verde-700)' } },
             [el('span', { text: 'Desconto por quantidade' }), el('span', { text: `− ${dinheiro(venda.descontoQuantidade)}` })])
         : null,
+      venda.descontoItens > 0
+        ? el('div', { class: 'total-linha', style: { color: 'var(--verde-700)' } },
+            [el('span', { text: 'Desconto nos itens' }), el('span', { text: `− ${dinheiro(venda.descontoItens)}` })])
+        : null,
       venda.desconto > 0
-        ? el('div', { class: 'total-linha' }, [el('span', { text: 'Desconto' }), el('span', { text: `− ${dinheiro(venda.desconto)}` })])
+        ? el('div', { class: 'total-linha' }, [el('span', { text: 'Desconto no pedido' }), el('span', { text: `− ${dinheiro(venda.desconto)}` })])
         : null,
       el('div', { class: 'total-linha grande' }, [el('span', { text: 'Total' }), el('span', { text: dinheiro(venda.total) })]),
+      pagamentosDe(venda).filter(p => p.valor > 0).length > 1
+        ? el('div', { class: 'cartao mt' }, el('div', { class: 'lista' }, pagamentosDe(venda).filter(p => p.valor > 0).map(p =>
+            el('div', { class: 'item' }, [
+              el('div', { class: 'info' }, [el('div', { class: 'titulo', text: nomeForma(p.forma) }),
+                p.conciliado ? el('div', { class: 'sub', text: '✓ conferido no extrato' }) : null]),
+              el('span', { class: 'valor', text: dinheiro(p.valor) })
+            ]))))
+        : null,
       venda.observacao ? el('div', { class: 'aviso aviso-amarelo mt', text: `Obs.: ${venda.observacao}` }) : null,
       (venda.alteracoes || []).length
         ? el('div', { class: 'aviso aviso-azul mt' },
@@ -189,73 +177,87 @@ export async function render(raiz) {
   async function editar(venda) {
     const produtos = (await listar('produtos')).filter(p => p.ativo !== false)
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-    // cópia de trabalho: nada é gravado até o usuário confirmar
-    const itens = venda.itens.map(i => ({ ...i }));
-    let pagamento = venda.pagamento;
+    const porId = new Map(produtos.map(p => [p.id, p]));
     let desconto = Number(venda.desconto) || 0;
 
+    /* Cópia de trabalho: nada é gravado até confirmar. Item que não foi mexido
+       volta exatamente como estava (com o preço do dia da venda); o que mudou
+       é recalculado pelo preço de tabela daquele dia, com a faixa de
+       quantidade e o desconto do item. */
+    const linhas = venda.itens.map(i => ({
+      original: i, produtoId: i.produtoId, qtd: Number(i.qtd), mexido: false,
+      regra: i.regraDesconto || (i.descontoItem > 0 ? { tipo: 'valor', valor: i.descontoItem } : null)
+    }));
+
+    function produtoDaLinha(l) {
+      const atual = porId.get(l.produtoId);
+      if (!l.original) return atual || null;
+      // preço e custo do dia da venda; faixas de desconto do cadastro de hoje
+      return {
+        ...(atual || {}), id: l.produtoId, nome: l.original.nome, unidade: l.original.unidade,
+        preco: l.original.precoTabela ?? l.original.preco, custo: l.original.custo
+      };
+    }
+    function itemDaLinha(l) {
+      if (!l.mexido && l.original) return l.original;
+      const produto = produtoDaLinha(l);
+      return produto ? montarItem(produto, l.qtd, l.regra) : l.original;
+    }
+    const itensAtuais = () => linhas.map(itemDaLinha);
+    const totais = () => totalizarVenda(itensAtuais(), desconto);
+
     const listaItens = el('div', { class: 'lista' });
-    const gradePag = el('div', { class: 'pagamentos' });
     const totalArea = el('div');
     const entradaDesconto = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: String(desconto) });
     const observacao = el('input', { type: 'text', value: venda.observacao || '', placeholder: 'Observação' });
     const motivo = el('input', { type: 'text', placeholder: 'Motivo da alteração (fica no histórico)' });
+    const pagamentoUI = editorPagamentos({ total: () => totais().total, inicial: pagamentosDe(venda) });
 
-    entradaDesconto.addEventListener('input', () => { desconto = Number(entradaDesconto.value) || 0; desenharTotais(); });
-
-    /* Ao mudar a quantidade o desconto por faixa é recalculado, senão a
-       alteração passaria por cima da regra cadastrada no produto. */
-    function recalcular(item) {
-      const produto = produtos.find(p => p.id === item.produtoId);
-      if (produto) {
-        const { pct, preco } = precoComDesconto(produto, item.qtd);
-        item.preco = Number(preco.toFixed(2));
-        item.precoTabela = produto.preco;
-        item.descontoQtd = pct;
-      }
-      item.total = Number((item.preco * item.qtd).toFixed(2));
-    }
+    const redesenharTudo = () => { desenharItens(); desenharTotais(); if (pagamentoUI.dividido()) pagamentoUI.redesenhar(); };
+    entradaDesconto.addEventListener('input', () => { desconto = Number(entradaDesconto.value) || 0; desenharTotais(); if (pagamentoUI.dividido()) pagamentoUI.redesenhar(); });
 
     const desenharItens = redesenho(() => {
       limpar(listaItens);
-      if (!itens.length) { anexar(listaItens, vazio('Sem itens — a venda não pode ficar vazia', '🛒')); return; }
-      itens.forEach((item, i) => {
+      if (!linhas.length) { anexar(listaItens, vazio('Sem itens — a venda não pode ficar vazia', '🛒')); return; }
+      linhas.forEach((l, indice) => {
+        const produto = produtoDaLinha(l);
+        const item = itemDaLinha(l);
+        const conta = produto ? calcularLinha(produto, l.qtd, l.regra) : null;
         const entrada = el('input', {
-          type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: String(item.qtd),
+          type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: String(l.qtd), disabled: !produto,
           onchange: (e) => {
             const q = Number(e.target.value) || 0;
-            if (q <= 0) { itens.splice(i, 1); } else { item.qtd = q; recalcular(item); }
-            desenharItens(); desenharTotais();
+            if (q <= 0) linhas.splice(indice, 1); else { l.qtd = q; l.mexido = true; }
+            redesenharTudo();
           }
         });
-        anexar(listaItens, el('div', { class: 'item' }, [
+        anexar(listaItens, el('div', { class: 'item item-pedido' }, [
           el('div', { class: 'info' }, [
             el('div', { class: 'titulo', text: item.nome }),
             el('div', { class: 'sub', text: `${dinheiro(item.preco)} × ${numero(item.qtd)} = ${dinheiro(item.total)}`
-              + (item.descontoQtd ? ` · −${percentual(item.descontoQtd)}` : '') })
+              + (item.descontoQtd ? ` · −${percentual(item.descontoQtd)} qtd` : '')
+              + (item.descontoItem > 0 ? ` · −${dinheiro(item.descontoItem)} no item` : '') }),
+            produto ? el('button', {
+              class: 'btn btn-vazio btn-sm', type: 'button', style: { marginTop: '6px', padding: '4px 10px', minHeight: '0' },
+              onclick: () => painelDescontoItem({
+                nome: item.nome, base: conta.bruto, regra: l.regra,
+                aoAplicar: (nova) => { l.regra = nova; l.mexido = true; redesenharTudo(); }
+              })
+            }, item.descontoItem > 0 ? '🏷️ Mudar desconto' : '🏷️ Desconto no item')
+              : el('div', { class: 'pq mudo', text: 'Produto fora do cadastro: só dá para retirar' })
           ]),
           el('div', { class: 'qtd' }, [entrada,
-            el('button', { type: 'button', onclick: () => { itens.splice(i, 1); desenharItens(); desenharTotais(); } }, '✕')])
+            el('button', { type: 'button', onclick: () => { linhas.splice(indice, 1); redesenharTudo(); } }, '✕')])
         ]));
       });
     });
 
-    function desenharPagamento() {
-      limpar(gradePag);
-      for (const f of FORMAS) {
-        anexar(gradePag, el('button', {
-          class: `pag ${pagamento === f ? 'ativo' : ''}`, type: 'button',
-          onclick: () => { pagamento = f; desenharPagamento(); }
-        }, PAGAMENTO[f]));
-      }
-    }
-
     function desenharTotais() {
-      const subtotal = itens.reduce((a, i) => a + i.total, 0);
-      const desc = Math.min(subtotal, Math.max(0, desconto));
+      const t = totais();
       anexar(limpar(totalArea),
-        el('div', { class: 'total-linha' }, [el('span', { text: 'Subtotal' }), el('span', { text: dinheiro(subtotal) })]),
-        el('div', { class: 'total-linha grande' }, [el('span', { text: 'Novo total' }), el('span', { text: dinheiro(subtotal - desc) })]),
+        el('div', { class: 'total-linha' }, [el('span', { text: 'Subtotal' }), el('span', { text: dinheiro(t.subtotal) })]),
+        t.desconto > 0 ? el('div', { class: 'total-linha' }, [el('span', { text: 'Desconto no pedido' }), el('span', { text: '− ' + dinheiro(t.desconto) })]) : null,
+        el('div', { class: 'total-linha grande' }, [el('span', { text: 'Novo total' }), el('span', { text: dinheiro(t.total) })]),
         el('div', { class: 'pq mudo', text: `Total anterior: ${dinheiro(venda.total)}` })
       );
     }
@@ -271,17 +273,10 @@ export async function render(raiz) {
         for (const p of achados) {
           anexar(lista, el('button', {
             class: 'item', onclick: () => {
-              const existente = itens.find(i => i.produtoId === p.id);
-              if (existente) { existente.qtd += 1; recalcular(existente); }
-              else {
-                const novo = {
-                  produtoId: p.id, nome: p.nome, unidade: p.unidade, qtd: 1,
-                  preco: p.preco, precoTabela: p.preco, descontoQtd: 0,
-                  custo: p.custo || 0, total: p.preco
-                };
-                recalcular(novo); itens.push(novo);
-              }
-              fecharBusca(); desenharItens(); desenharTotais();
+              const existente = linhas.find(l => l.produtoId === p.id);
+              if (existente) { existente.qtd += 1; existente.mexido = true; }
+              else linhas.push({ original: null, produtoId: p.id, qtd: 1, mexido: true, regra: null });
+              fecharBusca(); redesenharTudo();
             }
           }, [
             el('div', { class: 'info' }, [
@@ -307,21 +302,23 @@ export async function render(raiz) {
           'O estoque e o lançamento financeiro são refeitos ao salvar. A alteração fica registrada no histórico da venda.'),
         listaItens,
         el('button', { class: 'btn btn-vazio btn-bloco mt', type: 'button', onclick: adicionarProduto }, '+ Adicionar produto'),
-        el('div', { class: 'campo mt' }, [el('label', { text: 'Desconto (R$)' }), entradaDesconto]),
+        el('div', { class: 'campo mt' }, [el('label', { text: 'Desconto no pedido (R$)' }), entradaDesconto]),
         totalArea,
         el('label', { class: 'pq negrito mt', text: 'Forma de pagamento', style: { display: 'block', marginBottom: '7px' } }),
-        gradePag,
+        pagamentoUI.elemento,
         el('div', { class: 'campo mt' }, [el('label', { text: 'Observação' }), observacao]),
         el('div', { class: 'campo' }, [el('label', { text: 'Motivo da alteração' }), motivo])
       ]),
       acoes: [{
         rotulo: 'Salvar alteração', class: 'btn-primario', acao: async (fechar) => {
-          if (!itens.length) { erro('A venda precisa ter ao menos um item'); return; }
+          if (!linhas.length) { erro('A venda precisa ter ao menos um item'); return; }
           if (!motivo.value.trim()) { erro('Informe o motivo da alteração'); return; }
+          const problema = pagamentoUI.problema();
+          if (problema) { erro(problema); return; }
           try {
             await alterarVenda(venda.id, {
-              itens, desconto, pagamento, observacao: observacao.value.trim(),
-              descontoQuantidade: Number(itens.reduce((a, i) => a + ((i.precoTabela || i.preco) - i.preco) * i.qtd, 0).toFixed(2))
+              itens: itensAtuais(), desconto, pagamentos: pagamentoUI.valor(),
+              observacao: observacao.value.trim()
             }, motivo.value.trim());
             sucesso('Venda alterada');
             fechar(); desenhar();
@@ -330,7 +327,7 @@ export async function render(raiz) {
       }]
     });
 
-    desenharItens(); desenharPagamento(); desenharTotais();
+    desenharItens(); desenharTotais();
   }
 
   /* ---------------- cliente da venda ---------------- */

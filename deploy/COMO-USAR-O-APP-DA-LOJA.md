@@ -47,9 +47,9 @@ vendas a partir dos relatórios em CSV. Veja
 
 | Aba | Para quê |
 |---|---|
-| **Início** | Vendas do dia, saldo das contas, gráfico de 14 dias e o que está para repor |
+| **Início** | Vendas de hoje e o resultado **do mês ou do ano** (faturamento, vendas, ticket, lucro, resultado, formas de pagamento), o **movimento de cada conta** no período e o que está para repor |
 | **Vender** | O PDV: toque nos produtos, escolha o pagamento e finalize |
-| **Estoque** | Entrada de mercadoria com custo real, preços, mínimo e cadastro |
+| **Estoque** | Entrada de mercadoria com custo real, preços, mínimo, cadastro e o **movimento por período** |
 | **Contas** | Caixa, conta do PIX e conta dos cartões: saldos, transferências, receitas e despesas |
 | **Mais** | Vendas, clientes, despesas, resultado, conferência do extrato, comissões, inventário, auditoria e ajustes |
 
@@ -66,6 +66,20 @@ controlar isso pela metade dá mais prejuízo do que não controlar.
 (*Estoque › produto › Editar › Desconto por quantidade*, por exemplo 5% acima de 50
 sacos e 10% acima de 100), o PDV aplica a maior faixa que couber e mostra no pedido
 quanto o cliente economizou. Ninguém precisa lembrar da tabela na hora da venda.
+
+**Desconto num produto só.** No pedido, cada item tem o botão **🏷️ Desconto no
+item**: escolha **% sobre o item** ou **R$ no item** e veja na hora como fica a
+linha. Ele vale por cima da faixa de quantidade. O **Desconto no pedido**, mais
+abaixo, continua existindo para o desconto geral. Comprovante, PDF e cupom mostram
+cada desconto separado — quantidade, item e pedido — e o total que o cliente
+economizou.
+
+**Mais de uma forma de pagamento.** Na forma de pagamento, toque em
+**➗ Dividir o pagamento em mais de uma forma**. Aparece um campo para cada forma
+(dinheiro, PIX, débito, crédito) e o quanto ainda falta; o botão **restante** de
+cada linha joga ali o que falta. A venda só finaliza quando a soma fecha com o
+total. Cada parte cai na conta da sua forma — o PIX na Conta PIX, o dinheiro no
+Caixa — e, se a venda for cancelada, cada conta é estornada do que recebeu.
 
 **Por voz:** toque em **🎤 Voz** e fale *"10 argamassa AC 3"*, *"cinco rejunte branco"*,
 *"desconto 20"* ou *"finalizar"*. No cadastro de cliente também dá para ditar:
@@ -108,10 +122,15 @@ aparecem no cabeçalho do comprovante, dos relatórios e do catálogo.
 ## Alterar uma venda já lançada
 
 Em **Mais › Vendas**, abra a venda e toque em **✏️ Alterar**. Dá para mudar
-quantidade, tirar ou acrescentar item, mudar desconto, forma de pagamento e
-observação. O estoque e o lançamento na conta são **refeitos** ao salvar, e a
-alteração fica registrada com data e motivo — o motivo é obrigatório, e é ele que
-aparece depois no relatório de auditoria.
+quantidade, tirar ou acrescentar item, dar ou tirar desconto em cada item, mudar o
+desconto do pedido, dividir ou juntar o pagamento e mudar a observação. O
+lançamento nas contas é **refeito** ao salvar; no estoque entra **só a diferença**
+(vendeu 120, alterou para 100: voltam 20, registrados como "alteração de venda" na
+data de hoje). A alteração fica registrada com data e motivo — o motivo é
+obrigatório, e é ele que aparece depois no relatório de auditoria.
+
+Item que você não mexeu continua exatamente como foi vendido, com o preço daquele
+dia. Item mexido é recalculado pelo preço de tabela do dia da venda.
 
 Na mesma tela dá para **identificar ou cadastrar o cliente** de uma venda que saiu
 sem cliente. A tela de vendas não mostra custo nem lucro: é a tela que o vendedor
@@ -161,7 +180,9 @@ saldo negativo.
 ## Conferir o extrato do banco e da maquininha
 
 **Mais › Conferência do extrato.** Exporte o extrato no aplicativo do banco ou da
-maquininha em **OFX ou CSV**, escolha a conta e mande o arquivo. O aplicativo:
+maquininha em **OFX ou CSV**, escolha a conta e mande o arquivo. Ao tocar em
+**📥 Escolher arquivo do extrato**, o celular mostra todos os arquivos — procure na
+pasta **Downloads** (ou onde o aplicativo do banco salvou). O aplicativo:
 
 - casa cada **crédito** com as vendas daquela forma de pagamento, por data e valor;
 - entende **depósito em lote** (a maquininha junta o dia num crédito só) e calcula
@@ -171,6 +192,26 @@ maquininha em **OFX ou CSV**, escolha a conta e mande o arquivo. O aplicativo:
   classificar e aprovar uma a uma. **Nada entra no financeiro sem sua aprovação.**
 
 O arquivo é lido dentro do celular; nada é enviado para a internet.
+
+**Formatos que ele entende** — o formato é reconhecido pelo **conteúdo**, não pelo
+nome do arquivo:
+
+- **OFX** de qualquer banco (o "Money/Quicken" da exportação), inclusive o de cartão
+  de crédito e os que mandam o débito sem sinal;
+- **CSV** com `;`, `,` ou tabulação, valor em `1.234,56` ou `1234.56`, em UTF-8 ou
+  no padrão antigo do Excel (Windows-1252, que é o da maioria dos bancos);
+- coluna única de valor com sinal, **colunas separadas de crédito e débito**
+  (Bradesco), ou valor sem sinal com coluna **C/D** ou **Entrada/Saída** (BB, Caixa);
+- linhas de **saldo anterior, saldo do dia e total** são ignoradas;
+- **relatório da maquininha** com valor bruto e líquido: casa o bruto com a venda e
+  lança a diferença como taxa.
+
+Se o arquivo for **PDF** ou **planilha do Excel (.xls/.xlsx)**, o aplicativo avisa:
+nesse caso, exporte de novo escolhendo OFX ou CSV.
+
+**Venda dividida é conferida por parte.** Uma venda de R$ 3.000 paga com R$ 2.000 no
+PIX e R$ 1.000 em dinheiro casa com o crédito de R$ 2.000 no extrato do PIX; a parte
+em dinheiro não precisa de extrato.
 
 > As janelas de conferência são diferentes por forma de pagamento, porque a
 > liquidação é: PIX cai na hora (2 dias), débito no dia seguinte (5 dias) e crédito
@@ -185,6 +226,39 @@ Em **Mais › Comissões**, escolha o período e veja quanto cada produto gerou.
 **📄 Relatório em PDF** imprime a apuração para conferir e assinar, e
 **💸 Lançar pagamento** joga o valor em Despesas, na categoria comissão. Vendas
 canceladas ficam de fora da apuração.
+
+**A comissão em % é calculada sobre o valor líquido** de cada item: o preço de
+tabela menos o desconto por quantidade, menos o desconto dado no item, menos a parte
+do item no desconto geral do pedido (o desconto do pedido é dividido entre os itens
+na proporção do valor de cada um). Assim, quem dá desconto paga uma comissão menor
+junto. A tela e o PDF mostram, por produto, o valor de tabela, os descontos e a base
+líquida. A comissão em **R$ por unidade** não muda com desconto: ela não depende de
+preço.
+
+## Movimento de estoque por período
+
+**Estoque › 📈 Movimento** (ou *Mais › Movimento de estoque*). Escolha o período —
+há atalhos para este mês, mês passado e este ano — e veja, para cada produto:
+
+| Saldo inicial | Entradas | Saídas | Saldo final |
+|---|---|---|---|
+| o que havia no primeiro dia | compras, cancelamentos, ajustes para mais | vendas, perdas, ajustes para menos | inicial + entradas − saídas |
+
+com a linha de **total** e, nos indicadores, os mesmos números **a custo**. Tocar
+num produto abre a **ficha** (kardex): cada movimento do período, com data, motivo e
+o saldo depois dele, e quanto das entradas e saídas veio de cada origem.
+**📄 Relatório em PDF** e **📄 Ficha em PDF** saem prontos para auditoria.
+
+O relatório sai de um **livro de estoque** que o aplicativo passou a manter: toda
+venda, cancelamento, alteração, entrada, ajuste e inventário fica lá, com data. Por
+isso o saldo final de um mês é sempre o inicial do mês seguinte. Por esse mesmo
+motivo, o estoque de um produto já cadastrado não se edita mais no cadastro: use
+**+ Entrada** ou **⚖️ Ajuste**, que registram o motivo.
+
+> Na primeira abertura desta versão, o livro é montado a partir do histórico que já
+> estava no celular. O que o histórico não explica (estoque digitado no cadastro,
+> dados importados de outro sistema) aparece como **saldo de abertura** antes do
+> primeiro movimento — o saldo de hoje fecha sempre com o estoque real.
 
 ## Ajustes extraordinários de estoque
 
@@ -270,6 +344,18 @@ O botão **📇 Backup só dos cadastros** gera um arquivo com **clientes, produ
 contas e configuração — sem nenhuma venda e sem saldo de estoque**. Serve para abrir
 outra loja, montar um segundo celular ou mandar a base para alguém sem entregar junto
 o faturamento. Quem recebe restaura o arquivo e lança a entrada do estoque real.
+
+### Backup da versão anterior
+
+Esta versão **restaura normalmente os backups feitos pela versão anterior** do
+aplicativo: as vendas antigas ganham a forma de pagamento no formato novo e o livro
+de estoque é montado a partir do histórico do arquivo. Do mesmo jeito, quem só
+atualiza o aplicativo no celular não precisa fazer nada — na primeira abertura
+aparece *"Dados atualizados para a nova versão"* e está pronto.
+
+O caminho contrário não vale: backup desta versão restaurado na versão anterior perde
+o livro de estoque e mostra "misto" nas vendas divididas. Atualize todos os
+aparelhos.
 
 ### Trocar de celular ou recuperar dados
 

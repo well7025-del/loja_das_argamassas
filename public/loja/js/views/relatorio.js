@@ -1,5 +1,6 @@
 /* Resultado da loja: o essencial para decidir — sem relatório que ninguém lê. */
 import { listar, config } from '../db.js';
+import { pagamentosDe, nomeForma, valorLiquidoItem } from '../regras.js';
 import { el, limpar, kpi, dinheiro, numero, percentual, barras, linha, dataCurta, dataBR,
   vazio, cartao, hoje, diasAtras, erro, sucesso, anexar } from '../ui.js';
 import { pdfTabela, entregarPdf, dinheiroPdf, qtdPdf } from '../documentos.js';
@@ -91,7 +92,9 @@ export async function render(raiz) {
     const porProduto = new Map();
     for (const v of noPeriodo) for (const i of v.itens) {
       const atual = porProduto.get(i.nome) || { qtd: 0, valor: 0, lucro: 0 };
-      atual.qtd += i.qtd; atual.valor += i.total; atual.lucro += i.total - i.custo * i.qtd;
+      // líquido: o ranking e o lucro por produto já descontam o desconto geral do pedido
+      const liquido = valorLiquidoItem(v, i);
+      atual.qtd += i.qtd; atual.valor += liquido; atual.lucro += liquido - (i.custo || 0) * i.qtd;
       porProduto.set(i.nome, atual);
     }
     const ranking = [...porProduto.entries()].map(([nome, r]) => ({ nome, ...r })).sort((a, b) => b.valor - a.valor);
@@ -103,7 +106,7 @@ export async function render(raiz) {
     const porPagamento = {};
     const porDia = {};
     for (const v of noPeriodo) {
-      porPagamento[v.pagamento] = (porPagamento[v.pagamento] || 0) + v.total;
+      for (const p of pagamentosDe(v)) porPagamento[p.forma] = (porPagamento[p.forma] || 0) + p.valor;
       const d = new Date(v.data).getDay();
       porDia[d] = (porDia[d] || 0) + v.total;
     }
@@ -143,7 +146,8 @@ anexar(limpar(corpo),
 
       Object.keys(porPagamento).length
         ? cartao('Como os clientes pagam', el('div', { class: 'cartao-corpo' },
-            barras(Object.entries(porPagamento).map(([k, v]) => ({ rotulo: k.toUpperCase(), valor: v })), { cor: '#2FA968' })))
+            barras(Object.entries(porPagamento).sort((a, b) => b[1] - a[1])
+              .map(([k, v]) => ({ rotulo: nomeForma(k), valor: v })), { cor: '#2FA968' })))
         : null,
 
       melhorDia

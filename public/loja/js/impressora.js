@@ -6,6 +6,7 @@
    largura do papel — 32 colunas para bobina de 58mm, 48 para 80mm.
    ============================================================ */
 import { config, definirConfig } from './db.js';
+import { pagamentosDe } from './regras.js';
 
 const ponte = () => window.AndroidImpressora;
 
@@ -97,16 +98,28 @@ export function montarCupom(venda, loja = {}, largura = 32) {
   for (const item of venda.itens) {
     for (const l of quebrar(item.nome, largura)) linhas.push(l);
     const calculo = `  ${qtdTexto(item.qtd)} x ${reais(item.preco)}`;
-    linhas.push(doisLados(calculo, reais(item.total), largura));
+    const bruto = (Number(item.total) || 0) + (Number(item.descontoItem) || 0);
+    linhas.push(doisLados(calculo, reais(bruto), largura));
+    if (item.descontoItem > 0) linhas.push(doisLados('  desconto no item', '-' + reais(item.descontoItem), largura));
   }
 
   linhas.push(traco);
+  // desconto de quantidade e de item já saem nas linhas; aqui só o do pedido é subtraído
   if (venda.desconto > 0) {
     linhas.push(doisLados('Subtotal', reais(venda.subtotal), largura));
     linhas.push(doisLados('Desconto', '-' + reais(venda.desconto), largura));
   }
   linhas.push(doisLados('TOTAL', 'R$ ' + reais(venda.total), largura));
-  linhas.push(doisLados('Pagamento', NOMES_PAGAMENTO[venda.pagamento] || venda.pagamento.toUpperCase(), largura));
+  const economia = (Number(venda.descontoQuantidade) || 0) + (Number(venda.descontoItens) || 0) + (Number(venda.desconto) || 0);
+  if (economia > 0) linhas.push(doisLados('Voce economizou', 'R$ ' + reais(economia), largura));
+  const pagamentos = pagamentosDe(venda).filter(p => p.valor > 0);
+  if (pagamentos.length > 1) {
+    linhas.push('Pagamento:');
+    for (const p of pagamentos) linhas.push(doisLados('  ' + (NOMES_PAGAMENTO[p.forma] || String(p.forma).toUpperCase()), reais(p.valor), largura));
+  } else {
+    const forma = pagamentos[0]?.forma || venda.pagamento || '';
+    linhas.push(doisLados('Pagamento', NOMES_PAGAMENTO[forma] || String(forma).toUpperCase(), largura));
+  }
   if (venda.observacao) {
     linhas.push('');
     for (const l of quebrar('Obs: ' + venda.observacao, largura)) linhas.push(l);

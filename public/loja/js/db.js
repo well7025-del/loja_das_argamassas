@@ -2,13 +2,28 @@
    Banco local do aplicativo (IndexedDB).
    Todos os dados ficam no proprio celular — o app funciona sem internet.
    ============================================================ */
+import {
+  pagamentosDe, normalizarPagamentos, validarPagamentos, formaResumo, nomeForma,
+  totalizarVenda, diferencaDeItens, descreverPagamento
+} from './regras.js';
+
+// mantidas aqui para quem já importava de db.js
+export { descontoPorQuantidade, precoComDesconto, comissaoDoItem } from './regras.js';
 
 const NOME_BANCO = 'argamassas-loja';
-const VERSAO = 3;
+const VERSAO = 4;
 
-/** Coleções do banco. `comprovantes` fica separado para o backup poder excluir as fotos. */
+/** Versão do formato dos dados (vendas com vários pagamentos e livro de estoque). */
+export const ESQUEMA_DADOS = 4;
+
+/**
+ * Coleções do banco. `comprovantes` fica separado para o backup poder excluir
+ * as fotos. `estoqueMov` é o livro de estoque: cada entrada e saída, com data —
+ * é dele que sai o relatório de movimento por período.
+ */
 export const COLECOES = ['produtos', 'clientes', 'vendas', 'despesas', 'contas', 'lancamentos',
-                         'comprovantes', 'documentos', 'ajustes', 'inventarios', 'extratos', 'config'];
+                         'comprovantes', 'documentos', 'ajustes', 'inventarios', 'extratos',
+                         'estoqueMov', 'config'];
 
 /** Coleções que guardam apenas cadastro — o backup "só cadastros" leva estas. */
 export const COLECOES_CADASTRO = ['produtos', 'clientes', 'contas', 'config'];
@@ -48,6 +63,7 @@ function abrir() {
         if (nome === 'ajustes') { store.createIndex('data', 'data'); store.createIndex('produtoId', 'produtoId'); }
         if (nome === 'inventarios') store.createIndex('data', 'data');
         if (nome === 'extratos') store.createIndex('data', 'importadoEm');
+        if (nome === 'estoqueMov') { store.createIndex('produtoId', 'produtoId'); store.createIndex('data', 'data'); }
       }
 
       // Banco novo: cria as contas padrão.
@@ -191,81 +207,102 @@ export function transferir({ origemId, destinoId, valor, descricao = '', data = 
   });
 }
 
-/* ---------------- Desconto por quantidade ---------------- */
+/* ---------------- Operações compostas ---------------- */
+
+/* ---------------- Livro de estoque ---------------- */
 
 /**
- * Faixas de desconto cadastradas no produto, por exemplo
- * [{ qtd: 50, percentual: 5 }, { qtd: 100, percentual: 10 }].
- * Vale a maior faixa já atingida pela quantidade do pedido.
+ * Grava um movimento no livro de estoque, dentro da transação de quem mexeu
+ * no saldo — se a operação desfaz, o movimento desfaz junto.
  */
-export function descontoPorQuantidade(produto, qtd) {
-  const faixas = (produto?.descontos || [])
-    .filter(f => Number(f.qtd) > 0 && Number(f.percentual) > 0)
-    .sort((a, b) => a.qtd - b.qtd);
-  let pct = 0;
-  for (const f of faixas) if (Number(qtd) >= Number(f.qtd)) pct = Number(f.percentual);
-  return pct;
-}
-
-/** Preço unitário já com o desconto de quantidade aplicado. */
-export function precoComDesconto(produto, qtd) {
-  const pct = descontoPorQuantidade(produto, qtd);
-  const preco = Number(produto?.preco) || 0;
-  return { pct, preco: Number((preco * (1 - pct / 100)).toFixed(4)) };
-}
-
-/** Comissão devida por um item vendido. */
-export function comissaoDoItem(produto, item) {
-  if (!produto?.comissao) return 0;
-  const qtd = Number(item.qtd) || 0;
-  const total = Number(item.total ?? (Number(item.preco) || 0) * qtd) || 0;
-  return produto.comissaoTipo === 'valor'
-    ? Number((produto.comissao * qtd).toFixed(2))
-    : Number((total * produto.comissao / 100).toFixed(2));
+function registrarMovimento(tx, { produtoId, qtd, tipo, data = null, refTipo = null, refId = null,
+                                  obs = '', saldo = null, motivo = null }) {
+  const q = Number(Number(qtd).toFixed(3));
+  if (!q) return Promise.resolve(null);
+  return pedido(tx.objectStore('estoqueMov').add({
+    produtoId, qtd: q, tipo, data: data || new Date().toISOString(),
+    refTipo, refId, obs: obs || '', saldo, motivo
+  }));
 }
 
 /* ---------------- Operações compostas ---------------- */
 
+/** Lançamentos de uma venda nas contas, um por forma de pagamento. */
+async function lancarPagamentos(tx, venda, vendaId, sufixo = '') {
+  const varios = venda.pagamentos.filter(p => p.contaId).length > 1;
+  for (const p of venda.pagamentos) {
+    if (!p.contaId || !(p.valor > 0)) continue;
+    await pedido(tx.objectStore('lancamentos').add({
+      contaId: p.contaId, data: venda.data, tipo: 'venda', valor: p.valor, forma: p.forma,
+      descricao: `Venda ${venda.codigo}${varios ? ` (${nomeForma(p.forma)})` : ''}${sufixo}`,
+      refTipo: 'venda', refId: vendaId
+    }));
+  }
+}
+
+/** Liga cada pagamento à conta que recebe aquela forma. */
+function distribuirPagamentos(contas, pagamentos, total) {
+  let lista = normalizarPagamentos(pagamentos);
+  if (!(total > 0)) lista = [{ forma: pagamentos?.[0]?.forma || 'dinheiro', valor: 0 }];
+  else {
+    const problema = validarPagamentos(lista, total);
+    if (problema) throw new Error(problema);
+  }
+  return lista.map(p => ({ ...p, contaId: acharConta(contas, p.forma)?.id ?? null, conciliado: false }));
+}
+
 /**
- * Registra uma venda: grava a venda, baixa o estoque de cada item e lança o
- * valor na conta correspondente à forma de pagamento — tudo numa única
- * transação, para nunca ficar pela metade.
+ * Registra uma venda: grava a venda, baixa o estoque de cada item, escreve o
+ * livro de estoque e lança cada pagamento na conta da sua forma — tudo numa
+ * única transação, para nunca ficar pela metade.
+ *
+ * `venda.pagamentos` é a lista [{ forma, valor }]; uma venda com
+ * `pagamento` (texto) e sem a lista é tratada como paga inteira nessa forma.
  */
 export function registrarVenda(venda, comprovante = null) {
-  return transacao(['vendas', 'produtos', 'lancamentos', 'contas', 'comprovantes'], 'readwrite', async (tx) => {
-    const lojaProdutos = tx.objectStore('produtos');
+  return transacao(['vendas', 'produtos', 'lancamentos', 'contas', 'comprovantes', 'estoqueMov'], 'readwrite', async (tx) => {
+    const contas = await pedido(tx.objectStore('contas').getAll());
+    const informados = venda.pagamentos?.length ? venda.pagamentos : [{ forma: venda.pagamento, valor: venda.total }];
+    venda.pagamentos = distribuirPagamentos(contas, informados, venda.total);
+    venda.pagamento = formaResumo(venda.pagamentos);
+    venda.contaId = venda.pagamentos.length === 1 ? venda.pagamentos[0].contaId : null;
 
+    const lojaProdutos = tx.objectStore('produtos');
+    const saldos = new Map();
     for (const item of venda.itens) {
       const p = await pedido(lojaProdutos.get(item.produtoId));
       if (!p) throw new Error('Produto do pedido não foi encontrado');
       if (p.estoque < item.qtd) throw new Error(`Estoque insuficiente de ${p.nome}: há ${p.estoque} ${p.unidade}`);
       p.estoque = Number((p.estoque - item.qtd).toFixed(3));
+      saldos.set(item.produtoId, p.estoque);
       await pedido(lojaProdutos.put(p));
     }
 
-    const contas = await pedido(tx.objectStore('contas').getAll());
-    const conta = acharConta(contas, venda.pagamento);
-    venda.contaId = conta?.id ?? null;
-
     const vendaId = await pedido(tx.objectStore('vendas').add(venda));
 
-    if (comprovante) await pedido(tx.objectStore('comprovantes').add({ vendaId, imagem: comprovante }));
-    if (conta) {
-      await pedido(tx.objectStore('lancamentos').add({
-        contaId: conta.id, data: venda.data, tipo: 'venda', valor: venda.total,
-        descricao: `Venda ${venda.codigo}`, refTipo: 'venda', refId: vendaId
-      }));
+    for (const item of venda.itens) {
+      await registrarMovimento(tx, {
+        produtoId: item.produtoId, qtd: -item.qtd, tipo: 'venda', data: venda.data,
+        refTipo: 'venda', refId: vendaId, obs: `Venda ${venda.codigo}`, saldo: saldos.get(item.produtoId)
+      });
     }
+    if (comprovante) await pedido(tx.objectStore('comprovantes').add({ vendaId, imagem: comprovante }));
+    await lancarPagamentos(tx, venda, vendaId);
     return vendaId;
   });
 }
 
-/** Cancela uma venda: devolve o estoque e estorna o valor na conta que recebeu. */
+/**
+ * Cancela uma venda: devolve o estoque e estorna, em cada conta, exatamente o
+ * que a venda tinha colocado nela (uma venda dividida em PIX e dinheiro
+ * estorna nas duas).
+ */
 export function cancelarVenda(vendaId) {
-  return transacao(['vendas', 'produtos', 'lancamentos'], 'readwrite', async (tx) => {
+  return transacao(['vendas', 'produtos', 'lancamentos', 'estoqueMov'], 'readwrite', async (tx) => {
     const venda = await pedido(tx.objectStore('vendas').get(vendaId));
     if (!venda) throw new Error('Venda não encontrada');
     if (venda.cancelada) throw new Error('Esta venda já foi cancelada');
+    const agora = new Date().toISOString();
 
     const lojaProdutos = tx.objectStore('produtos');
     for (const item of venda.itens) {
@@ -273,14 +310,27 @@ export function cancelarVenda(vendaId) {
       if (!p) continue;
       p.estoque = Number((p.estoque + item.qtd).toFixed(3));
       await pedido(lojaProdutos.put(p));
+      await registrarMovimento(tx, {
+        produtoId: item.produtoId, qtd: item.qtd, tipo: 'cancelamento', data: agora,
+        refTipo: 'venda', refId: vendaId, obs: `Cancelamento da venda ${venda.codigo}`, saldo: p.estoque
+      });
     }
-    if (venda.contaId) {
-      await pedido(tx.objectStore('lancamentos').add({
-        contaId: venda.contaId, data: new Date().toISOString(), tipo: 'estorno', valor: -venda.total,
+
+    const lancamentos = tx.objectStore('lancamentos');
+    const daVenda = (await pedido(lancamentos.getAll()))
+      .filter(l => l.refTipo === 'venda' && l.refId === vendaId);
+    const porConta = new Map();
+    for (const l of daVenda) porConta.set(l.contaId, (porConta.get(l.contaId) || 0) + l.valor);
+    for (const [contaId, valor] of porConta) {
+      const v = Number(valor.toFixed(2));
+      if (!(v > 0)) continue;
+      await pedido(lancamentos.add({
+        contaId, data: agora, tipo: 'estorno', valor: -v,
         descricao: `Estorno da venda ${venda.codigo}`, refTipo: 'venda', refId: vendaId
       }));
     }
     venda.cancelada = true;
+    venda.canceladaEm = agora;
     await pedido(tx.objectStore('vendas').put(venda));
   });
 }
@@ -310,7 +360,7 @@ export function registrarDespesa(despesa) {
  */
 export function entradaEstoque(produtoId, quantidade, opcoes = {}) {
   const { custoUnitario = null, fornecedor = '', observacao = '', contaId = null, data = null } = opcoes;
-  return transacao(['produtos', 'despesas', 'lancamentos'], 'readwrite', async (tx) => {
+  return transacao(['produtos', 'despesas', 'lancamentos', 'estoqueMov'], 'readwrite', async (tx) => {
     const loja = tx.objectStore('produtos');
     const p = await pedido(loja.get(produtoId));
     if (!p) throw new Error('Produto não encontrado');
@@ -336,6 +386,11 @@ export function entradaEstoque(produtoId, quantidade, opcoes = {}) {
       custoMedio: custoAplicado, fornecedor: fornecedor || null
     }];
     await pedido(loja.put(p));
+    await registrarMovimento(tx, {
+      produtoId, qtd: quantidade, tipo: quantidade > 0 ? 'entrada' : 'saida_manual',
+      data: data || new Date().toISOString(), saldo: novo,
+      obs: [fornecedor, observacao].filter(Boolean).join(' — ')
+    });
 
     // pagamento ao fornecedor
     let total = 0;
@@ -393,7 +448,7 @@ export const MOTIVOS_AJUSTE = [
  */
 export function ajustarEstoque({ produtoId, motivo, quantidade, novoSaldo = null, observacao = '',
                                  documento = null, responsavel = '', data = null }) {
-  return transacao(['produtos', 'ajustes', 'documentos'], 'readwrite', async (tx) => {
+  return transacao(['produtos', 'ajustes', 'documentos', 'estoqueMov'], 'readwrite', async (tx) => {
     const loja = tx.objectStore('produtos');
     const p = await pedido(loja.get(produtoId));
     if (!p) throw new Error('Produto não encontrado');
@@ -418,6 +473,11 @@ export function ajustarEstoque({ produtoId, motivo, quantidade, novoSaldo = null
       data: data || new Date().toISOString()
     };
     const id = await pedido(tx.objectStore('ajustes').add(registro));
+    await registrarMovimento(tx, {
+      produtoId, qtd: diferenca, tipo: motivo === 'inventario' ? 'inventario' : 'ajuste', motivo,
+      data: registro.data, refTipo: 'ajuste', refId: id, saldo: depois,
+      obs: [observacao, responsavel && `por ${responsavel}`].filter(Boolean).join(' — ')
+    });
 
     if (documento) {
       await pedido(tx.objectStore('documentos').add({
@@ -467,7 +527,7 @@ export function alterarPreco({ produtoId, novoPreco, motivo = '', documento = nu
  * como ajuste, preservando o que foi contado x o que o sistema esperava.
  */
 export function fecharInventario({ itens, observacao = '', responsavel = '', documento = null }) {
-  return transacao(['produtos', 'inventarios', 'ajustes', 'documentos'], 'readwrite', async (tx) => {
+  return transacao(['produtos', 'inventarios', 'ajustes', 'documentos', 'estoqueMov'], 'readwrite', async (tx) => {
     const loja = tx.objectStore('produtos');
     const agora = new Date().toISOString();
     const linhas = [];
@@ -489,12 +549,17 @@ export function fecharInventario({ itens, observacao = '', responsavel = '', doc
           data: agora, qtd: diferenca, obs: 'Inventário', saldo: contado, custoMedio: p.custo || 0
         }];
         await pedido(loja.put(p));
-        await pedido(tx.objectStore('ajustes').add({
+        const idAjuste = await pedido(tx.objectStore('ajustes').add({
           produtoId: p.id, produtoNome: p.nome, unidade: p.unidade, motivo: 'inventario',
           antes: esperado, depois: contado, diferenca,
           valorCusto: Number((diferenca * (p.custo || 0)).toFixed(2)),
           observacao, responsavel, data: agora
         }));
+        await registrarMovimento(tx, {
+          produtoId: p.id, qtd: diferenca, tipo: 'inventario', motivo: 'inventario', data: agora,
+          refTipo: 'ajuste', refId: idAjuste, saldo: contado,
+          obs: ['Contagem de inventário', responsavel && `por ${responsavel}`].filter(Boolean).join(' — ')
+        });
       }
     }
 
@@ -519,78 +584,222 @@ export function fecharInventario({ itens, observacao = '', responsavel = '', doc
 /* ---------------- Alteração de venda ---------------- */
 
 /**
- * Regrava uma venda já lançada: devolve o estoque dos itens antigos, baixa o
- * dos novos e refaz o lançamento na conta. Guarda o que mudou, porque uma venda
- * alterada sem trilha é exatamente o que uma auditoria procura.
+ * Altera uma venda já lançada: itens (quantidade, desconto, inclusão e
+ * retirada), desconto geral, pagamentos, cliente e observação.
+ *
+ * O estoque recebe só a diferença entre os itens antigos e os novos, e ela vai
+ * para o livro de estoque como "alteração de venda" na data de hoje — a venda
+ * original continua lá, como aconteceu. Os lançamentos da venda nas contas são
+ * refeitos pelos novos pagamentos.
  */
 export function alterarVenda(vendaId, mudancas, motivo = '') {
-  return transacao(['vendas', 'produtos', 'lancamentos', 'contas'], 'readwrite', async (tx) => {
+  return transacao(['vendas', 'produtos', 'lancamentos', 'contas', 'estoqueMov'], 'readwrite', async (tx) => {
     const lojaVendas = tx.objectStore('vendas');
     const lojaProdutos = tx.objectStore('produtos');
     const venda = await pedido(lojaVendas.get(vendaId));
     if (!venda) throw new Error('Venda não encontrada');
     if (venda.cancelada) throw new Error('Venda cancelada não pode ser alterada');
+    const agora = new Date().toISOString();
 
     const anterior = JSON.parse(JSON.stringify({
-      itens: venda.itens, total: venda.total, desconto: venda.desconto,
-      pagamento: venda.pagamento, clienteId: venda.clienteId
+      itens: venda.itens, total: venda.total, desconto: venda.desconto || 0,
+      pagamentos: pagamentosDe(venda), clienteId: venda.clienteId
     }));
 
-    // devolve o estoque dos itens atuais
     if (mudancas.itens) {
-      for (const item of venda.itens) {
-        const p = await pedido(lojaProdutos.get(item.produtoId));
-        if (!p) continue;
-        p.estoque = Number((p.estoque + item.qtd).toFixed(3));
+      if (!mudancas.itens.length) throw new Error('A venda precisa ter ao menos um item');
+      for (const d of diferencaDeItens(venda.itens, mudancas.itens)) {
+        const p = await pedido(lojaProdutos.get(d.produtoId));
+        if (!p) { if (d.qtd < 0) throw new Error('Produto do pedido não encontrado'); continue; }
+        const novo = Number((p.estoque + d.qtd).toFixed(3));
+        if (novo < 0) throw new Error(`Estoque insuficiente de ${p.nome}: há ${p.estoque} ${p.unidade}`);
+        p.estoque = novo;
         await pedido(lojaProdutos.put(p));
-      }
-      // e baixa os novos
-      for (const item of mudancas.itens) {
-        const p = await pedido(lojaProdutos.get(item.produtoId));
-        if (!p) throw new Error('Produto do pedido não encontrado');
-        if (p.estoque < item.qtd) throw new Error(`Estoque insuficiente de ${p.nome}: há ${p.estoque} ${p.unidade}`);
-        p.estoque = Number((p.estoque - item.qtd).toFixed(3));
-        await pedido(lojaProdutos.put(p));
+        await registrarMovimento(tx, {
+          produtoId: d.produtoId, qtd: d.qtd, tipo: 'alteracao', data: agora,
+          refTipo: 'venda', refId: vendaId, saldo: novo,
+          obs: `Alteração da venda ${venda.codigo}${motivo ? ' — ' + motivo : ''}`
+        });
       }
       venda.itens = mudancas.itens;
     }
 
-    for (const campo of ['desconto', 'descontoQuantidade', 'pagamento', 'clienteId', 'clienteNome', 'clienteTelefone', 'observacao']) {
+    for (const campo of ['desconto', 'clienteId', 'clienteNome', 'clienteTelefone', 'observacao']) {
       if (mudancas[campo] !== undefined) venda[campo] = mudancas[campo];
     }
 
-    venda.subtotal = Number(venda.itens.reduce((a, i) => a + i.total, 0).toFixed(2));
-    venda.total = Number((venda.subtotal - (venda.desconto || 0)).toFixed(2));
-    venda.custo = Number(venda.itens.reduce((a, i) => a + i.custo * i.qtd, 0).toFixed(2));
-    venda.lucro = Number((venda.total - venda.custo).toFixed(2));
+    // totais só são refeitos quando algo de valor mudou: identificar o cliente
+    // de uma venda importada não pode reescrever o total que veio do sistema antigo
+    const mexeuEmValor = Boolean(mudancas.itens) || mudancas.desconto !== undefined;
+    if (mexeuEmValor) {
+      const t = totalizarVenda(venda.itens, venda.desconto || 0);
+      Object.assign(venda, {
+        subtotal: t.subtotal, descontoQuantidade: t.descontoQuantidade, descontoItens: t.descontoItens,
+        desconto: t.desconto, total: t.total, custo: t.custo, lucro: t.lucro
+      });
+    }
 
+    // pagamentos: os informados, ou — numa venda de forma única — a mesma forma com o novo total
+    let pagamentos = mudancas.pagamentos;
+    if (!pagamentos && mexeuEmValor && Math.abs(venda.total - anterior.total) > 0.009) {
+      if (anterior.pagamentos.length > 1) throw new Error('O total mudou: informe de novo como a venda foi paga');
+      pagamentos = [{ forma: anterior.pagamentos[0].forma, valor: venda.total }];
+    }
+    const refazerFinanceiro = Boolean(pagamentos);
+    if (refazerFinanceiro) {
+      const contas = await pedido(tx.objectStore('contas').getAll());
+      const novos = distribuirPagamentos(contas, pagamentos, venda.total);
+      // o que não mudou continua conferido no extrato
+      for (const p of novos) {
+        const igual = anterior.pagamentos.find(a => a.forma === p.forma && Math.abs(a.valor - p.valor) < 0.005);
+        if (igual?.conciliado) p.conciliado = true;
+      }
+      venda.pagamentos = novos;
+      venda.pagamento = formaResumo(novos);
+      venda.contaId = novos.length === 1 ? novos[0].contaId : null;
+      venda.conciliada = novos.every(p => p.conciliado || !p.valor);
+    } else if (!venda.pagamentos) {
+      venda.pagamentos = anterior.pagamentos;
+    }
+
+    const formatar = (v) => Number(v).toFixed(2).replace('.', ',');
     venda.alteracoes = [...(venda.alteracoes || []), {
-      data: new Date().toISOString(), motivo,
-      de: { total: anterior.total, desconto: anterior.desconto, pagamento: anterior.pagamento, itens: anterior.itens.length },
-      para: { total: venda.total, desconto: venda.desconto, pagamento: venda.pagamento, itens: venda.itens.length }
+      data: agora, motivo,
+      de: { total: anterior.total, desconto: anterior.desconto, itens: anterior.itens.length,
+            pagamento: descreverPagamento({ pagamentos: anterior.pagamentos }, formatar) },
+      para: { total: venda.total, desconto: venda.desconto || 0, itens: venda.itens.length,
+              pagamento: descreverPagamento(venda, formatar) }
     }];
     await pedido(lojaVendas.put(venda));
 
-    // refaz o lançamento financeiro: estorna o antigo e lança o novo
-    const lancamentos = tx.objectStore('lancamentos');
-    const todos = await pedido(lancamentos.getAll());
-    for (const l of todos) {
-      if (l.refTipo === 'venda' && l.refId === vendaId && l.tipo === 'venda') {
-        await pedido(lancamentos.delete(l.id));
+    if (refazerFinanceiro) {
+      const lancamentos = tx.objectStore('lancamentos');
+      for (const l of await pedido(lancamentos.getAll())) {
+        if (l.refTipo === 'venda' && l.refId === vendaId && l.tipo === 'venda') await pedido(lancamentos.delete(l.id));
       }
-    }
-    const contas = await pedido(tx.objectStore('contas').getAll());
-    const conta = contas.find(c => c.ativa !== false && (c.recebe || []).includes(venda.pagamento));
-    venda.contaId = conta?.id ?? null;
-    await pedido(lojaVendas.put(venda));
-    if (conta) {
-      await pedido(lancamentos.add({
-        contaId: conta.id, data: venda.data, tipo: 'venda', valor: venda.total,
-        descricao: `Venda ${venda.codigo} (alterada)`, refTipo: 'venda', refId: vendaId
-      }));
+      await lancarPagamentos(tx, venda, vendaId, ' (alterada)');
     }
     return venda;
   });
+}
+
+/* ---------------- Cadastro de produto ---------------- */
+
+/**
+ * Salva o cadastro. O estoque informado num produto novo entra no livro como
+ * saldo de abertura; num produto existente, uma mudança de saldo pelo
+ * cadastro vira ajuste — o normal é usar Entrada ou Ajuste, que pedem motivo.
+ */
+export function salvarProduto(produto) {
+  return transacao(['produtos', 'estoqueMov'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('produtos');
+    const anterior = produto.id != null ? await pedido(loja.get(produto.id)) : null;
+    const id = await pedido(loja.put(produto));
+    const diferenca = (Number(produto.estoque) || 0) - (Number(anterior?.estoque) || 0);
+    await registrarMovimento(tx, {
+      produtoId: id, qtd: diferenca, tipo: anterior ? 'ajuste' : 'abertura',
+      motivo: anterior ? 'cadastro' : null, saldo: Number(produto.estoque) || 0,
+      obs: anterior ? 'Saldo alterado no cadastro do produto' : 'Estoque informado no cadastro'
+    });
+    return id;
+  });
+}
+
+/* ---------------- Atualização dos dados (versões anteriores) ---------------- */
+
+/**
+ * Monta o livro de estoque a partir do histórico que já existe: vendas (e os
+ * cancelamentos delas), ajustes, inventários e as entradas guardadas no
+ * produto. O que o histórico não explica — o estoque digitado no cadastro, o
+ * que veio de outro sistema, entradas antigas demais — vira um "saldo de
+ * abertura" antes do primeiro movimento, de modo que a soma do livro feche
+ * sempre com o estoque atual de cada produto.
+ */
+export async function reconstruirLivroEstoque() {
+  const [produtos, vendas, ajustes, lancamentos] = await Promise.all([
+    listar('produtos'), listar('vendas'), listar('ajustes'), listar('lancamentos')
+  ]);
+  const existe = new Set(produtos.map(p => p.id));
+  const estornoEm = new Map();
+  for (const l of lancamentos) if (l.tipo === 'estorno' && l.refTipo === 'venda') estornoEm.set(l.refId, l.data);
+
+  const movs = [];
+  const add = (m) => { if (existe.has(m.produtoId) && Number(m.qtd)) movs.push({ refTipo: null, refId: null, obs: '', saldo: null, motivo: null, ...m }); };
+
+  for (const v of vendas) {
+    for (const i of v.itens || []) {
+      add({ produtoId: i.produtoId, qtd: -(Number(i.qtd) || 0), tipo: 'venda', data: v.data,
+            refTipo: 'venda', refId: v.id, obs: `Venda ${v.codigo}` });
+      if (v.cancelada) {
+        add({ produtoId: i.produtoId, qtd: Number(i.qtd) || 0, tipo: 'cancelamento',
+              data: v.canceladaEm || estornoEm.get(v.id) || v.data,
+              refTipo: 'venda', refId: v.id, obs: `Cancelamento da venda ${v.codigo}` });
+      }
+    }
+  }
+  for (const a of ajustes) {
+    if (a.motivo === 'preco') continue;
+    add({ produtoId: a.produtoId, qtd: Number(a.diferenca) || 0, tipo: a.motivo === 'inventario' ? 'inventario' : 'ajuste',
+          motivo: a.motivo, data: a.data, refTipo: 'ajuste', refId: a.id, saldo: a.depois ?? null, obs: a.observacao || '' });
+  }
+  // entradas de mercadoria: no produto, são as que têm custo da nota ou fornecedor
+  for (const p of produtos) {
+    for (const m of p.movimentos || []) {
+      if (!('custoUnitario' in m) && !('fornecedor' in m)) continue;
+      add({ produtoId: p.id, qtd: Number(m.qtd) || 0, tipo: m.qtd > 0 ? 'entrada' : 'saida_manual',
+            data: m.data, saldo: m.saldo ?? null, obs: [m.fornecedor, m.obs].filter(Boolean).join(' — ') });
+    }
+  }
+
+  // abertura: fecha o livro com o estoque atual
+  for (const p of produtos) {
+    const doProduto = movs.filter(m => m.produtoId === p.id);
+    const soma = doProduto.reduce((a, m) => a + m.qtd, 0);
+    const diferenca = Number(((Number(p.estoque) || 0) - soma).toFixed(3));
+    if (!diferenca) continue;
+    const primeira = doProduto.map(m => Date.parse(m.data)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const quando = Number.isFinite(primeira) ? new Date(primeira - 1000)
+      : (p.criadoEm ? new Date(p.criadoEm) : new Date());
+    movs.push({
+      produtoId: p.id, qtd: diferenca, tipo: 'abertura', data: quando.toISOString(),
+      refTipo: null, refId: null, saldo: null, motivo: 'reconstrucao',
+      obs: 'Saldo anterior ao histórico registrado no aplicativo'
+    });
+  }
+
+  movs.sort((a, b) => String(a.data).localeCompare(String(b.data)));
+  await transacao(['estoqueMov'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('estoqueMov');
+    await pedido(loja.clear());
+    for (const m of movs) await pedido(loja.add(m));
+  });
+  return movs.length;
+}
+
+/**
+ * Leva os dados ao formato desta versão. Roda na abertura do aplicativo e
+ * depois de restaurar um backup — por isso um backup da versão anterior
+ * restaura sem perder nada:
+ *  - vendas de forma única ganham a lista `pagamentos`;
+ *  - o livro de estoque é montado a partir do histórico.
+ * Rodar de novo não estraga nada.
+ */
+export async function atualizarEsquema({ reconstruir = false } = {}) {
+  const versao = await config('esquemaDados', 3);
+  if (versao >= ESQUEMA_DADOS && !reconstruir) return { atualizado: false };
+
+  await transacao(['vendas'], 'readwrite', async (tx) => {
+    const loja = tx.objectStore('vendas');
+    for (const v of await pedido(loja.getAll())) {
+      if (Array.isArray(v.pagamentos) && v.pagamentos.length) continue;
+      v.pagamentos = pagamentosDe(v);
+      if (v.descontoItens == null) v.descontoItens = 0;
+      await pedido(loja.put(v));
+    }
+  });
+  const movimentos = await reconstruirLivroEstoque();
+  await definirConfig('esquemaDados', ESQUEMA_DADOS);
+  return { atualizado: true, de: versao, movimentos };
 }
 
 /* ---------------- Backup ---------------- */
@@ -606,13 +815,14 @@ export async function exportarTudo({ incluirFotos = true, somenteCadastros = fal
   if (somenteCadastros) {
     // o backup de cadastros serve para começar outra loja ou outro celular:
     // vai sem estoque e sem nada que dependa de venda
-    dados.produtos = (dados.produtos || []).map(p => ({ ...p, estoque: 0 }));
+    dados.produtos = (dados.produtos || []).map(p => ({ ...p, estoque: 0, movimentos: [] }));
     dados.contas = (dados.contas || []).map(c => ({ ...c, saldoInicial: 0 }));
     dados.config = (dados.config || []).filter(c => c.chave !== 'contadorVendas');
   }
   return {
     aplicativo: 'Loja das Argamassas — Caruaru',
     versao: VERSAO,
+    esquema: ESQUEMA_DADOS,
     geradoEm: new Date().toISOString(),
     incluiFotos: somenteCadastros ? false : incluirFotos,
     tipo: somenteCadastros ? 'cadastros' : 'completo',
@@ -627,7 +837,7 @@ export async function exportarTudo({ incluirFotos = true, somenteCadastros = fal
 export async function importarTudo(backup, modo = 'substituir') {
   if (!backup?.dados) throw new Error('Arquivo de backup inválido');
   const colecoes = COLECOES.filter(c => Array.isArray(backup.dados[c]) || c === 'config');
-  return transacao(colecoes, 'readwrite', async (tx) => {
+  const total = await transacao(colecoes, 'readwrite', async (tx) => {
     let total = 0;
     for (const colecao of colecoes) {
       const loja = tx.objectStore(colecao);
@@ -641,11 +851,19 @@ export async function importarTudo(backup, modo = 'substituir') {
     }
     return total;
   });
+
+  // Backup de versão anterior (sem livro de estoque) ou junção com outro
+  // aparelho: o livro é remontado a partir do histórico restaurado.
+  const temLivro = Array.isArray(backup.dados.estoqueMov) && modo !== 'juntar';
+  await atualizarEsquema({ reconstruir: !temLivro });
+  return total;
 }
 
 /** Apaga todo o conteúdo, mantendo a configuração da loja. */
 export async function apagarMovimento() {
   for (const colecao of ['vendas', 'despesas', 'lancamentos', 'comprovantes']) await limpar(colecao);
+  // o estoque continua: o livro recomeça com o saldo de hoje de cada produto
+  await reconstruirLivroEstoque();
 }
 
 /** Tamanho aproximado ocupado no aparelho. */

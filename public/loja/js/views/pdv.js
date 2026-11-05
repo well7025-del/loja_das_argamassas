@@ -1,17 +1,15 @@
 /* Venda rápida: toque nos produtos, confira o pedido e finalize. */
-import { listar, obter, salvar, registrarVenda, config, precoComDesconto } from '../db.js';
+import { listar, salvar, registrarVenda, config } from '../db.js';
+import { calcularLinha, montarItem, totalizarVenda, descreverPagamento } from '../regras.js';
+import { editorPagamentos, painelDescontoItem } from '../componentes.js';
 import { estado, recalcularPendencias } from '../app.js';
 import {
   el, limpar, dinheiro, numero, percentual, erro, sucesso, painel, vazio, campoFoto,
   abrirWhatsApp, numeroWhatsApp, telefoneBR, copiar, dataHora, atrasar, redesenho, $, anexar } from '../ui.js';
 import { vozDisponivel, criarReconhecedor, interpretarComandoPDV, interpretarCliente } from '../voice.js';
 import { impressoraDisponivel, imprimirCupom } from '../impressora.js';
-import { pdfComprovante, entregarPdf, nomeArquivoSeguro } from '../documentos.js';
+import { pdfComprovante, entregarPdf, nomeArquivoSeguro, textoRecibo, pixParaVenda } from '../documentos.js';
 
-const PAGAMENTOS = [
-  { id: 'dinheiro', rotulo: '💵 Dinheiro' }, { id: 'pix', rotulo: '⚡ PIX' },
-  { id: 'debito', rotulo: '💳 Débito' }, { id: 'credito', rotulo: '💳 Crédito' }
-];
 
 export async function render(raiz) {
   let produtos = (await listar('produtos')).filter(p => p.ativo !== false)
@@ -24,9 +22,9 @@ export async function render(raiz) {
     return;
   }
 
-  const carrinho = new Map();     // produtoId -> { produto, qtd }
+  const carrinho = new Map();     // produtoId -> { produto, qtd, regra } (regra = desconto no item)
   let cliente = null;
-  let pagamento = 'dinheiro';
+  let pagamentosEscolhidos = null; // o editor guarda entre um abrir e outro do pedido
   let desconto = 0;
   let categoria = '';
   let busca = '';
@@ -105,25 +103,19 @@ export async function render(raiz) {
     atualizar();
   }
 
-  /* Linhas do pedido já com o desconto por quantidade cadastrado no produto. */
-  const linhasPedido = () => [...carrinho.values()].map(i => {
-    const { pct, preco } = precoComDesconto(i.produto, i.qtd);
-    return {
-      produto: i.produto, qtd: i.qtd, precoTabela: i.produto.preco, pct, preco,
-      total: Number((preco * i.qtd).toFixed(2)),
-      economia: Number(((i.produto.preco - preco) * i.qtd).toFixed(2))
-    };
-  });
+  /* Linhas do pedido: faixa de quantidade do cadastro e, por cima, o desconto dado no item. */
+  const linhasPedido = () => [...carrinho.values()].map(i => ({
+    produto: i.produto, qtd: i.qtd, regra: i.regra || null,
+    ...calcularLinha(i.produto, i.qtd, i.regra)
+  }));
 
   const totais = () => {
     const linhas = linhasPedido();
-    const bruto = linhas.reduce((a, l) => a + l.precoTabela * l.qtd, 0);
-    const subtotal = linhas.reduce((a, l) => a + l.total, 0);
-    const porQtd = Number((bruto - subtotal).toFixed(2));
-    const desc = Math.min(subtotal, Math.max(0, desconto));
+    const itensVenda = [...carrinho.values()].map(i => montarItem(i.produto, i.qtd, i.regra));
+    const t = totalizarVenda(itensVenda, desconto);
     return {
-      linhas, bruto, subtotal, porQtd, desconto: desc,
-      total: Number((subtotal - desc).toFixed(2)),
+      ...t, linhas, itensVenda,
+      bruto: Number(linhas.reduce((a, l) => a + l.precoTabela * l.qtd, 0).toFixed(2)),
       itens: linhas.reduce((a, l) => a + l.qtd, 0)
     };
   };
@@ -144,13 +136,22 @@ export async function render(raiz) {
   function abrirPedido() {
     const itens = el('div', { class: 'lista' });
     const areaCliente = el('div');
-    const gradePag = el('div', { class: 'pagamentos' });
     const entradaDesconto = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: String(desconto) });
     const observacao = el('input', { type: 'text', placeholder: 'Observação (opcional)' });
     const foto = campoFoto({ rotulo: 'Comprovante de pagamento (opcional)' });
     const totalArea = el('div');
 
-    entradaDesconto.addEventListener('input', () => { desconto = Number(entradaDesconto.value) || 0; desenhar(); });
+    const pagamentoUI = editorPagamentos({
+      total: () => totais().total,
+      inicial: pagamentosEscolhidos,
+      aoMudar: () => { pagamentosEscolhidos = pagamentoUI.valor(); }
+    });
+
+    entradaDesconto.addEventListener('input', () => {
+      desconto = Number(entradaDesconto.value) || 0;
+      desenhar();
+      if (pagamentoUI.dividido()) pagamentoUI.redesenhar();
+    });
 
     function desenharCliente() {
       limpar(areaCliente);
@@ -170,16 +171,6 @@ export async function render(raiz) {
       }
     }
 
-    function desenharPagamento() {
-      limpar(gradePag);
-      for (const p of PAGAMENTOS) {
-        gradePag.appendChild(el('button', {
-          class: `pag ${pagamento === p.id ? 'ativo' : ''}`, type: 'button',
-          onclick: () => { pagamento = p.id; desenharPagamento(); }
-        }, p.rotulo));
-      }
-    }
-
     function desenhar() {
       limpar(itens);
       if (!carrinho.size) {
@@ -190,14 +181,31 @@ export async function render(raiz) {
             type: 'number', inputmode: 'decimal', min: '0', value: String(linha.qtd),
             onchange: (e) => definirQtd(linha.produto.id, Number(e.target.value))
           });
-          anexar(itens, el('div', { class: 'item' }, [
+          const regra = linha.regra;
+          anexar(itens, el('div', { class: 'item item-pedido' }, [
             el('div', { class: 'info' }, [
               el('div', { class: 'titulo', text: linha.produto.nome }),
-              el('div', { class: 'sub', text: `${dinheiro(linha.preco)} × ${numero(linha.qtd)} = ${dinheiro(linha.total)}` }),
+              el('div', { class: 'sub', text: `${dinheiro(linha.preco)} × ${numero(linha.qtd)} = ${dinheiro(linha.bruto)}` }),
               linha.pct > 0
-                ? el('div', { class: 'pq', style: { color: 'var(--verde)', fontWeight: '600' },
-                    text: `−${percentual(linha.pct)} por quantidade (economia de ${dinheiro(linha.economia)})` })
-                : null
+                ? el('div', { class: 'pq', style: { color: 'var(--verde-700)', fontWeight: '600' },
+                    text: `−${percentual(linha.pct)} por quantidade (economia de ${dinheiro(linha.economiaQtd)})` })
+                : null,
+              linha.descontoItem > 0
+                ? el('div', { class: 'pq', style: { color: 'var(--verde-700)', fontWeight: '600' },
+                    text: (regra.tipo === 'percentual'
+                      ? `−${percentual(regra.valor)} no item (−${dinheiro(linha.descontoItem)})`
+                      : `−${dinheiro(linha.descontoItem)} no item`) + ` → ${dinheiro(linha.total)}` })
+                : null,
+              el('button', {
+                class: 'btn btn-vazio btn-sm', type: 'button', style: { marginTop: '6px', padding: '4px 10px', minHeight: '0' },
+                onclick: () => painelDescontoItem({
+                  nome: linha.produto.nome, base: linha.bruto, regra,
+                  aoAplicar: (nova) => {
+                    const item = carrinho.get(linha.produto.id);
+                    if (item) { item.regra = nova; atualizar(); if (pagamentoUI.dividido()) pagamentoUI.redesenhar(); }
+                  }
+                })
+              }, linha.descontoItem > 0 ? '🏷️ Mudar desconto' : '🏷️ Desconto no item')
             ]),
             el('div', { class: 'qtd' }, [
               el('button', { type: 'button', onclick: () => adicionar(linha.produto, -1) }, '−'),
@@ -210,9 +218,13 @@ export async function render(raiz) {
       const t = totais();
       anexar(limpar(totalArea),
         el('div', { class: 'total-linha' }, [el('span', { text: 'Subtotal' }), el('span', { text: dinheiro(t.bruto) })]),
-        t.porQtd > 0
-          ? el('div', { class: 'total-linha', style: { color: 'var(--verde)' } },
-              [el('span', { text: 'Desconto por quantidade' }), el('span', { text: '− ' + dinheiro(t.porQtd) })])
+        t.descontoQuantidade > 0
+          ? el('div', { class: 'total-linha', style: { color: 'var(--verde-700)' } },
+              [el('span', { text: 'Desconto por quantidade' }), el('span', { text: '− ' + dinheiro(t.descontoQuantidade) })])
+          : null,
+        t.descontoItens > 0
+          ? el('div', { class: 'total-linha', style: { color: 'var(--verde-700)' } },
+              [el('span', { text: 'Desconto nos itens' }), el('span', { text: '− ' + dinheiro(t.descontoItens) })])
           : null,
         t.desconto > 0
           ? el('div', { class: 'total-linha' }, [el('span', { text: 'Desconto no pedido' }), el('span', { text: '− ' + dinheiro(t.desconto) })])
@@ -229,22 +241,27 @@ export async function render(raiz) {
           el('label', { class: 'pq negrito', text: 'Cliente', style: { display: 'block', marginBottom: '7px' } }),
           areaCliente
         ])),
-        el('div', { class: 'campo mt' }, [el('label', { text: 'Desconto (R$)' }), entradaDesconto]),
+        el('div', { class: 'campo mt' }, [el('label', {}, ['Desconto no pedido (R$) ',
+          el('span', { class: 'dica', text: '— além dos descontos nos itens' })]), entradaDesconto]),
         totalArea,
         el('label', { class: 'pq negrito mt', text: 'Forma de pagamento', style: { display: 'block', marginBottom: '7px' } }),
-        gradePag,
+        pagamentoUI.elemento,
         el('div', { class: 'campo mt' }, [observacao]),
         foto.elemento
       ]),
       acoes: [
         { rotulo: 'Continuar vendendo', acao: (f) => f() },
-        { rotulo: 'Finalizar', class: 'btn-ok', acao: (f) => finalizar(f, observacao.value, foto.valor()) }
+        { rotulo: 'Finalizar', class: 'btn-ok', acao: (f) => {
+          const problema = pagamentoUI.problema();
+          if (problema) { erro(problema); return; }
+          finalizar(f, observacao.value, foto.valor(), pagamentoUI.valor());
+        } }
       ],
       aoFechar: () => { redesenharPedido = null; }
     });
 
-    redesenharPedido = redesenho(() => { desenhar(); desenharCliente(); });
-    desenhar(); desenharCliente(); desenharPagamento();
+    redesenharPedido = redesenho(() => { desenhar(); desenharCliente(); if (pagamentoUI.dividido()) pagamentoUI.redesenhar(); });
+    desenhar(); desenharCliente();
     return p;
   }
 
@@ -387,7 +404,7 @@ export async function render(raiz) {
     return `CAR-${String(n).padStart(5, '0')}`;
   }
 
-  async function finalizar(fecharPainel, observacao, comprovante) {
+  async function finalizar(fecharPainel, observacao, comprovante, pagamentos) {
     if (!carrinho.size) { erro('Adicione produtos ao pedido'); return; }
     const t = totais();
     try {
@@ -397,27 +414,24 @@ export async function render(raiz) {
         clienteId: cliente?.id || null,
         clienteNome: cliente?.nome || null,
         clienteTelefone: cliente?.telefone || null,
-        itens: t.linhas.map(l => ({
-          produtoId: l.produto.id, nome: l.produto.nome, unidade: l.produto.unidade,
-          qtd: l.qtd, preco: Number(l.preco.toFixed(2)), precoTabela: l.precoTabela,
-          descontoQtd: l.pct, custo: l.produto.custo || 0,
-          total: l.total
-        })),
-        subtotal: Number(t.subtotal.toFixed(2)),
-        descontoQuantidade: t.porQtd,
-        desconto: Number(t.desconto.toFixed(2)),
-        total: Number(t.total.toFixed(2)),
-        pagamento, observacao: observacao || '',
-        cancelada: false
+        itens: t.itensVenda,
+        subtotal: t.subtotal,
+        descontoQuantidade: t.descontoQuantidade,
+        descontoItens: t.descontoItens,
+        desconto: t.desconto,
+        total: t.total,
+        custo: t.custo,
+        lucro: t.lucro,
+        pagamentos,
+        observacao: observacao || '',
+        cancelada: false,
+        temComprovante: Boolean(comprovante)
       };
-      venda.custo = Number(venda.itens.reduce((a, i) => a + i.custo * i.qtd, 0).toFixed(2));
-      venda.lucro = Number((venda.total - venda.custo).toFixed(2));
-      venda.temComprovante = Boolean(comprovante);
 
       await registrarVenda(venda, comprovante);
 
       carrinho.clear();
-      cliente = null; desconto = 0; pagamento = 'dinheiro';
+      cliente = null; desconto = 0; pagamentosEscolhidos = null;
       produtos = (await listar('produtos')).filter(p => p.ativo !== false)
         .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
       atualizar();
@@ -429,43 +443,16 @@ export async function render(raiz) {
     }
   }
 
-  function textoRecibo(venda, loja, pix) {
-    const linhas = [
-      `*${loja.nome || 'Loja das Argamassas — Caruaru'}*`,
-      loja.endereco || null,
-      loja.whatsapp || loja.telefone || null, '',
-      `*Comprovante de venda ${venda.codigo}*`,
-      `Data: ${dataHora(venda.data)}`,
-      venda.clienteNome ? `Cliente: ${venda.clienteNome}` : null, '',
-      ...venda.itens.map(i => `• ${numero(i.qtd)}x ${i.nome} — ${dinheiro(i.total)}`
-        + (i.descontoQtd ? ` (−${percentual(i.descontoQtd)})` : '')), '',
-      venda.descontoQuantidade > 0 ? `Desconto por quantidade: -${dinheiro(venda.descontoQuantidade)}` : null,
-      venda.desconto > 0 ? `Desconto no pedido: -${dinheiro(venda.desconto)}` : null,
-      `*Total: ${dinheiro(venda.total)}*`,
-      `Pagamento: ${venda.pagamento.toUpperCase()}`,
-      venda.observacao ? `Obs.: ${venda.observacao}` : null
-    ];
-    if (pix?.chave) {
-      linhas.push('', '*Pagamento via PIX*', `Chave (${pix.tipo || 'PIX'}):`, pix.chave);
-      if (pix.titular) linhas.push(`Titular: ${pix.titular}`);
-      if (pix.banco) linhas.push(`Banco: ${pix.banco}`);
-    }
-    linhas.push('', 'Obrigado pela preferência!');
-    return linhas.filter(l => l !== null).join('\n');
-  }
-
   async function mostrarRecibo(venda, comprovante) {
     const loja = await config('loja', estado.loja || {});
-    const pixConfig = await config('pix', null);
-    // a chave PIX só entra no comprovante quando o recebimento é por PIX
-    const pix = (pixConfig?.chave && (venda.pagamento === 'pix' || pixConfig.sempre)) ? pixConfig : null;
+    const pix = pixParaVenda(venda, await config('pix', null));
     const texto = textoRecibo(venda, loja, pix);
     const numeroZap = numeroWhatsApp(venda.clienteTelefone);
     const arquivo = `comprovante-${nomeArquivoSeguro(venda.codigo)}.pdf`;
 
     const corpo = el('div', {}, [
       el('div', { class: 'aviso aviso-verde' },
-        `✅ ${dinheiro(venda.total)} — ${venda.pagamento.toUpperCase()}${comprovante ? ' · comprovante anexado' : ''}`),
+        `✅ ${dinheiro(venda.total)} — ${descreverPagamento(venda, dinheiro)}${comprovante ? ' · comprovante anexado' : ''}`),
       el('pre', {
         style: { whiteSpace: 'pre-wrap', font: 'inherit', fontSize: '13.5px', background: 'var(--cinza-100)', padding: '13px', borderRadius: '11px', margin: '0' },
         text: texto

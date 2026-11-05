@@ -83,9 +83,13 @@ Google Drive**.
 Abra em `https://SEU-ENDERECO/loja/` — ou publique a pasta `public/loja/` sozinha em
 qualquer hospedagem estática, pois não depende do servidor.
 
-Tem PDV com voz, **desconto automático por quantidade** e comprovante em texto ou
-**PDF com a chave PIX copiável**; estoque com **custo médio real**, foto do produto,
-comissão por produto e **ajustes extraordinários com documento de autorização**;
+Tem PDV com voz, **desconto automático por quantidade**, **desconto por item**,
+**pagamento dividido em várias formas** e comprovante em texto ou **PDF com a chave
+PIX copiável**; painel inicial com o **resultado e o movimento das contas do mês e do
+ano**; **livro de estoque** com relatório de movimento por período (saldo inicial,
+entradas, saídas e saldo final); estoque com **custo médio real**, foto do produto,
+comissão por produto **sobre o valor líquido** e **ajustes extraordinários com
+documento de autorização**;
 **contas separadas para dinheiro, PIX e cartões** (transferências, receitas e
 despesas, todas com anexo); **conferência do extrato bancário e da maquininha**
 (OFX/CSV, com pré-lançamento para aprovação); **inventário cego** e **relatórios de

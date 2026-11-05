@@ -7,6 +7,7 @@
    ============================================================ */
 import { criarPdf, pdfParaBlob, pdfParaBase64 } from './pdf.js';
 import { config } from './db.js';
+import { pagamentosDe, nomeForma, descreverPagamento } from './regras.js';
 
 const AZUL = [0.04, 0.24, 0.46];
 const CINZA = [0.42, 0.49, 0.56];
@@ -60,32 +61,59 @@ export function pdfComprovante(venda, loja = {}, pix = null) {
   doc.texto('TOTAL', { tamanho: 9, negrito: true, alinhamento: 'direita', x: doc.largura - doc.margem - 6 });
   doc.pular(20);
 
+  const VERDE = [0.12, 0.48, 0.30];
   for (const item of venda.itens) {
-    doc.garantirEspaco(60, (d) => cabecalho(d, loja, 'COMPROVANTE DE VENDA', venda.codigo));
+    doc.garantirEspaco(70, (d) => cabecalho(d, loja, 'COMPROVANTE DE VENDA', venda.codigo));
     const nome = item.nome.length > 52 ? item.nome.slice(0, 51) + '…' : item.nome;
     doc.texto(nome, { tamanho: 10, x: doc.margem + 6 });
     doc.texto(`${qtdPdf(item.qtd)} ${item.unidade || ''}`.trim(), { tamanho: 10, alinhamento: 'direita', x: 380 });
     doc.texto(dinheiroPdf(item.preco), { tamanho: 10, alinhamento: 'direita', x: 460 });
     doc.texto(dinheiroPdf(item.total), { tamanho: 10, negrito: true, alinhamento: 'direita', x: doc.largura - doc.margem - 6 });
-    doc.pular(16);
+    doc.pular(13);
+    const notas = [];
+    if (item.descontoQtd) notas.push(`${String(item.descontoQtd).replace('.', ',')}% por quantidade (tabela ${dinheiroPdf(item.precoTabela)})`);
+    if (item.descontoItem > 0) {
+      const regra = item.regraDesconto;
+      notas.push(`desconto no item ${regra?.tipo === 'percentual' ? String(regra.valor).replace('.', ',') + '% ' : ''}- ${dinheiroPdf(item.descontoItem)}`);
+    }
+    if (notas.length) doc.texto(notas.join(' · '), { tamanho: 8, cor: VERDE, x: doc.margem + 14 }).pular(12);
+    doc.pular(3);
   }
 
   doc.pular(4).linha().pular(16);
   const direita = doc.largura - doc.margem - 6;
-  if (venda.desconto > 0) {
-    doc.texto('Subtotal', { tamanho: 10, alinhamento: 'direita', x: 460 });
-    doc.texto(dinheiroPdf(venda.subtotal), { tamanho: 10, alinhamento: 'direita', x: direita }).pular(14);
-    doc.texto('Desconto', { tamanho: 10, alinhamento: 'direita', x: 460 });
-    doc.texto('- ' + dinheiroPdf(venda.desconto), { tamanho: 10, alinhamento: 'direita', x: direita }).pular(14);
+  const totalLinha = (rotulo, valor, opcoes = {}) => {
+    doc.texto(rotulo, { tamanho: 10, alinhamento: 'direita', x: 460, ...opcoes });
+    doc.texto(valor, { tamanho: 10, alinhamento: 'direita', x: direita, ...opcoes }).pular(14);
+  };
+  const tabela = (venda.itens || []).reduce((a, i) => a + (Number(i.precoTabela) || Number(i.preco) || 0) * (Number(i.qtd) || 0), 0);
+  const algumDesconto = (venda.descontoQuantidade || 0) + (venda.descontoItens || 0) + (venda.desconto || 0) > 0;
+  if (algumDesconto) {
+    totalLinha('Subtotal', dinheiroPdf(tabela));
+    if (venda.descontoQuantidade > 0) totalLinha('Desconto por quantidade', '- ' + dinheiroPdf(venda.descontoQuantidade), { cor: VERDE });
+    if (venda.descontoItens > 0) totalLinha('Desconto nos itens', '- ' + dinheiroPdf(venda.descontoItens), { cor: VERDE });
+    if (venda.desconto > 0) totalLinha('Desconto no pedido', '- ' + dinheiroPdf(venda.desconto), { cor: VERDE });
   }
   doc.texto('TOTAL', { tamanho: 13, negrito: true, alinhamento: 'direita', x: 460 });
   doc.texto(dinheiroPdf(venda.total), { tamanho: 13, negrito: true, alinhamento: 'direita', x: direita, cor: AZUL }).pular(18);
-  doc.texto(`Forma de pagamento: ${(venda.pagamento || '').toUpperCase()}`, { tamanho: 10, alinhamento: 'direita', x: direita }).pular(16);
+
+  const pagamentos = pagamentosDe(venda).filter(p => p.valor > 0);
+  if (pagamentos.length > 1) {
+    doc.texto('Pagamento:', { tamanho: 10, negrito: true, alinhamento: 'direita', x: direita }).pular(13);
+    for (const p of pagamentos) {
+      doc.texto(`${nomeForma(p.forma)}  ${dinheiroPdf(p.valor)}`, { tamanho: 10, alinhamento: 'direita', x: direita }).pular(13);
+    }
+    doc.pular(3);
+  } else {
+    doc.texto(`Forma de pagamento: ${nomeForma(pagamentos[0]?.forma || venda.pagamento).toUpperCase()}`,
+      { tamanho: 10, alinhamento: 'direita', x: direita }).pular(16);
+  }
 
   if (venda.observacao) { doc.pular(6).texto(`Observação: ${venda.observacao}`, { tamanho: 9, cor: CINZA }).pular(14); }
 
-  // bloco do PIX — só faz sentido enquanto a venda não estiver paga em espécie
-  if (pix?.chave && venda.pagamento === 'pix') {
+  // bloco do PIX: quem chama decide se entra (venda com parte em PIX, ou "mostrar sempre")
+  if (pix?.chave) {
+    const parteEmPix = pagamentos.filter(p => p.forma === 'pix').reduce((a, p) => a + p.valor, 0);
     doc.pular(12);
     doc.retangulo({ alturaCaixa: 92, deslocamento: -78, cor: [0.95, 0.98, 0.96] });
     doc.texto('PAGAMENTO VIA PIX', { tamanho: 10, negrito: true, x: doc.margem + 10, cor: [0.12, 0.48, 0.30] }).pular(16);
@@ -93,7 +121,7 @@ export function pdfComprovante(venda, loja = {}, pix = null) {
     doc.texto(pix.chave, { tamanho: 13, negrito: true, x: doc.margem + 10 }).pular(16);
     if (pix.titular) { doc.texto(`Titular: ${pix.titular}`, { tamanho: 9, x: doc.margem + 10 }).pular(12); }
     if (pix.banco) { doc.texto(`Instituição: ${pix.banco}`, { tamanho: 9, x: doc.margem + 10 }).pular(12); }
-    doc.texto(`Valor a pagar: ${dinheiroPdf(venda.total)}`, { tamanho: 10, negrito: true, x: doc.margem + 10 }).pular(16);
+    doc.texto(`Valor a pagar no PIX: ${dinheiroPdf(parteEmPix || venda.total)}`, { tamanho: 10, negrito: true, x: doc.margem + 10 }).pular(16);
   }
 
   rodape(doc);
@@ -205,16 +233,73 @@ export const nomeArquivoSeguro = (texto) => String(texto)
 
 /* ---------------- Texto de acompanhamento ---------------- */
 
+/**
+ * Dados do PIX que entram no comprovante desta venda: quando alguma parte foi
+ * paga em PIX, ou quando a loja marcou "mostrar a chave em todo comprovante".
+ */
+export function pixParaVenda(venda, pixConfig) {
+  if (!pixConfig?.chave) return null;
+  const temPix = pagamentosDe(venda).some(p => p.forma === 'pix' && p.valor > 0);
+  return temPix || pixConfig.sempre ? pixConfig : null;
+}
+
+const brl = (v) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const qtdBr = (v) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+const pctBr = (v) => `${(Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+const quandoBr = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+/** Texto do comprovante para a tela e para o WhatsApp — o mesmo no PDV e no histórico. */
+export function textoRecibo(venda, loja = {}, pix = null) {
+  const pagamentos = pagamentosDe(venda).filter(p => p.valor > 0);
+  const linhas = [
+    `*${loja.nome || 'Loja das Argamassas — Caruaru'}*`,
+    loja.endereco || null,
+    loja.whatsapp || loja.telefone || null, '',
+    `*Comprovante de venda ${venda.codigo}*`,
+    `Data: ${quandoBr(venda.data)}`,
+    venda.clienteNome ? `Cliente: ${venda.clienteNome}` : null, ''
+  ];
+  for (const i of venda.itens) {
+    const notas = [];
+    if (i.descontoQtd) notas.push(`−${pctBr(i.descontoQtd)} qtd`);
+    if (i.descontoItem > 0) notas.push(i.regraDesconto?.tipo === 'percentual'
+      ? `−${pctBr(i.regraDesconto.valor)} no item` : `−${brl(i.descontoItem)} no item`);
+    linhas.push(`• ${qtdBr(i.qtd)}x ${i.nome} — ${brl(i.total)}${notas.length ? ` (${notas.join(', ')})` : ''}`);
+  }
+  linhas.push('');
+  if (venda.descontoQuantidade > 0) linhas.push(`Desconto por quantidade: -${brl(venda.descontoQuantidade)}`);
+  if (venda.descontoItens > 0) linhas.push(`Desconto nos itens: -${brl(venda.descontoItens)}`);
+  if (venda.desconto > 0) linhas.push(`Desconto no pedido: -${brl(venda.desconto)}`);
+  linhas.push(`*Total: ${brl(venda.total)}*`);
+  if (pagamentos.length > 1) {
+    linhas.push('Pagamento:');
+    for (const p of pagamentos) linhas.push(`  ${nomeForma(p.forma)}: ${brl(p.valor)}`);
+  } else {
+    linhas.push(`Pagamento: ${nomeForma(pagamentos[0]?.forma || venda.pagamento)}`);
+  }
+  if (venda.observacao) linhas.push(`Obs.: ${venda.observacao}`);
+  if (pix?.chave) {
+    const parteEmPix = pagamentos.filter(p => p.forma === 'pix').reduce((a, p) => a + p.valor, 0);
+    linhas.push('', '*Pagamento via PIX*', `Chave (${pix.tipo || 'PIX'}):`, pix.chave);
+    if (pix.titular) linhas.push(`Titular: ${pix.titular}`);
+    if (pix.banco) linhas.push(`Banco: ${pix.banco}`);
+    if (parteEmPix && pagamentos.length > 1) linhas.push(`Valor no PIX: ${brl(parteEmPix)}`);
+  }
+  linhas.push('', 'Obrigado pela preferência!');
+  return linhas.filter(l => l !== null).join('\n');
+}
+
 /** Mensagem que vai junto com o PDF no WhatsApp, já com a chave PIX. */
 export async function textoComprovante(venda) {
   const loja = await config('loja', {});
-  const pix = await config('pix', null);
+  const pix = pixParaVenda(venda, await config('pix', null));
   const linhas = [
     `*${loja.nome || 'Loja das Argamassas'}*`,
     `Comprovante da venda ${venda.codigo}`,
-    `Total: ${dinheiroPdf(venda.total)}`
+    `Total: ${dinheiroPdf(venda.total)}`,
+    `Pagamento: ${descreverPagamento(venda, dinheiroPdf)}`
   ];
-  if (pix?.chave && venda.pagamento === 'pix') {
+  if (pix) {
     linhas.push('', '*Para pagar via PIX*', `Chave (${pix.tipo || 'PIX'}):`, pix.chave);
     if (pix.titular) linhas.push(`Titular: ${pix.titular}`);
   }
